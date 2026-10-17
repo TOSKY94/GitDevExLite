@@ -564,8 +564,11 @@ public partial class RepoTabViewModel : ObservableObject, IDisposable
         _ = LoadPullRequestDetailAsync(value);
     }
 
+    public bool ShowCommitMode => !ShowWorkingDirectory && !HasPullRequestDetail;
+
     partial void OnPullRequestDetailChanged(PullRequestDetail? value)
     {
+        OnPropertyChanged(nameof(ShowCommitMode));
         OnPropertyChanged(nameof(HasPullRequestDetail));
         OnPropertyChanged(nameof(PullRequestDetailTitle));
         OnPropertyChanged(nameof(PullRequestDetailSummary));
@@ -747,6 +750,7 @@ public partial class RepoTabViewModel : ObservableObject, IDisposable
 
     partial void OnShowWorkingDirectoryChanged(bool value)
     {
+        OnPropertyChanged(nameof(ShowCommitMode));
         ActiveDiff = null;
         ActiveConflict = null;
         OnPropertyChanged(nameof(CanCommentSelectedPullRequestInline));

@@ -106,7 +106,7 @@
                     <StackPanel Spacing="4">
                       <TextBlock Text="{Binding Title}" TextWrapping="Wrap" FontWeight="SemiBold" />
                       <StackPanel Orientation="Horizontal" Spacing="6">
-                        <Border Background="#2E7D32" CornerRadius="8" Padding="6,1">
+                        <Border Background="#2E7D32" CornerRadius="8" Padding="6,1" IsVisible="{Binding !IsDraft}">
                           <TextBlock Text="{Binding Status}" FontSize="10" Foreground="White" />
                         </Border>
                         <Border Background="#616161" CornerRadius="8" Padding="6,1" IsVisible="{Binding IsDraft}">
@@ -248,7 +248,7 @@
 
         <!-- Commit mode -->
         <Grid Grid.Column="0" RowDefinitions="Auto,*" Margin="8"
-              IsVisible="{Binding !ShowWorkingDirectory}">
+              IsVisible="{Binding ShowCommitMode}">
           <StackPanel Grid.Row="0" Spacing="4"
                       IsVisible="{Binding SelectedRow, Converter={x:Static ObjectConverters.IsNotNull}}">
             <TextBlock Text="{Binding SelectedRow.Commit.Summary}" FontWeight="SemiBold" TextWrapping="Wrap" />
