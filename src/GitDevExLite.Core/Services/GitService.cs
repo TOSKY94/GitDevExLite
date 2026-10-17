@@ -105,6 +105,7 @@ public sealed partial class GitService : IGitService
 
     public void Commit(string message, bool amend = false)
     {
+        if (string.IsNullOrWhiteSpace(message)) throw new ArgumentException("Enter a commit message.");
         var sig = Repo.Config.BuildSignature(DateTimeOffset.Now)
             ?? throw new InvalidOperationException("Set user.name and user.email in your git config.");
         Repo.Commit(message, sig, sig, new CommitOptions { AmendPreviousCommit = amend });
@@ -152,6 +153,7 @@ public sealed partial class GitService : IGitService
 
     public void CreateBranch(string name, string sha, bool checkout)
     {
+        RequireSafeName(name);
         var commit = Repo.Lookup<Commit>(sha) ?? throw new ArgumentException($"Commit '{sha}' not found.");
         var branch = Repo.CreateBranch(name, commit);
         if (checkout) Commands.Checkout(Repo, branch);
@@ -159,6 +161,7 @@ public sealed partial class GitService : IGitService
 
     public void RenameBranch(string oldName, string newName)
     {
+        RequireSafeName(newName);
         var branch = Repo.Branches[oldName] ?? throw new ArgumentException($"Branch '{oldName}' not found.");
         Repo.Branches.Rename(branch, newName);
     }
@@ -226,7 +229,9 @@ public sealed partial class GitService : IGitService
 
     private static Dictionary<string, string> Env(bool background) =>
         // Background work must never pop up a sign-in window.
-        background ? new() { ["GCM_INTERACTIVE"] = "never" } : new();
+        background
+            ? new() { ["GCM_INTERACTIVE"] = "never", ["GIT_SSH_COMMAND"] = "ssh -o BatchMode=yes" }
+            : new();
 
     private static void RequireSafeName(string name)
     {
@@ -256,7 +261,7 @@ public sealed partial class GitService : IGitService
         return RunRemoteAsync(args, progress, ct, background);
     }
 
-    public Task PullAsync(PullMode mode, IProgress<GitProgress>? progress, CancellationToken ct)
+    public Task<GitOpResult> PullAsync(PullMode mode, IProgress<GitProgress>? progress, CancellationToken ct)
     {
         if (Repo.Info.IsHeadDetached) throw new InvalidOperationException("HEAD is detached; check out a branch first.");
         if (!Repo.Head.IsTracking)
@@ -269,14 +274,16 @@ public sealed partial class GitService : IGitService
             PullMode.FastForwardOnly => new[] { "--ff-only" },
             _ => new[] { "--no-rebase", "--no-edit" }
         });
-        return RunRemoteAsync(args, progress, ct);
+        // A pull that stops on conflicts leaves a merge or rebase to resolve, so it reports a paused result.
+        return RunOperationAsync(args, progress, ct, Env(false));
     }
 
-    public Task PushAsync(IProgress<GitProgress>? progress, CancellationToken ct)
+    public Task PushAsync(IProgress<GitProgress>? progress, CancellationToken ct, bool forceWithLease = false)
     {
         if (Repo.Info.IsHeadDetached) throw new InvalidOperationException("HEAD is detached; check out a branch first.");
         var head = Repo.Head;
         var args = new List<string> { "push", "--progress" };
+        if (forceWithLease) args.Add("--force-with-lease");
         if (!head.IsTracking)
         {
             var remote = DefaultRemote() ?? throw new InvalidOperationException("This repository has no remotes.");
@@ -284,6 +291,13 @@ public sealed partial class GitService : IGitService
             args.AddRange(new[] { "--set-upstream", remote, head.FriendlyName });
         }
         return RunRemoteAsync(args, progress, ct);
+    }
+
+    public Task FetchRefAsync(string refspec, IProgress<GitProgress>? progress, CancellationToken ct)
+    {
+        RequireSafeName(refspec);
+        var remote = DefaultRemote() ?? throw new InvalidOperationException("This repository has no remotes.");
+        return RunRemoteAsync(new[] { "fetch", "--progress", remote, refspec }, progress, ct);
     }
 
     public void SetUpstream(string branch, string upstream)
@@ -459,8 +473,10 @@ public sealed partial class GitService : IGitService
         if (result.ExitCode == 0) return new(!paused, paused, output);
         if (paused) return new(false, true, output);
 
-        throw new GitCommandException(
-            string.IsNullOrWhiteSpace(output) ? $"git exited with code {result.ExitCode}." : output, result.ExitCode);
+        var message = string.IsNullOrWhiteSpace(output) ? $"git exited with code {result.ExitCode}." : output;
+        throw GitAuthFailure.IsAuthFailure(result.StdErr)
+            ? new GitAuthException(message, result.ExitCode)
+            : new GitCommandException(message, result.ExitCode);
     }
 
     // ---- conflicts -------------------------------------------------------------
@@ -468,7 +484,7 @@ public sealed partial class GitService : IGitService
     private string RequireRepoPath(string path)
     {
         var segments = path.Split('/', '\\');
-        if (string.IsNullOrWhiteSpace(path) || path.StartsWith('-') || Path.IsPathRooted(path) || segments.Contains(".."))
+        if (string.IsNullOrWhiteSpace(path) || Path.IsPathRooted(path) || segments.Contains(".."))
             throw new ArgumentException($"'{path}' is not a path inside the repository.");
         return Path.GetFullPath(Path.Combine(Repo.Info.WorkingDirectory, path));
     }

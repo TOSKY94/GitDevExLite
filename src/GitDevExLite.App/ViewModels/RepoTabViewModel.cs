@@ -4,6 +4,7 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using GitDevExLite.Core.Diff;
 using GitDevExLite.Core.Graph;
+using GitDevExLite.Core.Hosting;
 using GitDevExLite.Core.Models;
 using GitDevExLite.Core.Services;
 
@@ -461,10 +462,22 @@ public partial class RepoTabViewModel : ObservableObject, IDisposable
     }
 
     [RelayCommand(CanExecute = nameof(CanCommit))]
-    private void Commit()
+    private async Task Commit()
     {
         try
         {
+            var findings = Amend && Staged.Count == 0 ? Array.Empty<SecretFinding>() : SecretScanner.ScanStaged(_git);
+            if (findings.Count > 0)
+            {
+                var list = string.Join("\n", findings.Take(10).Select(f => $"\u2022 {f.Path}:{f.Line}  {f.Rule}  ({f.Preview})"));
+                if (findings.Count > 10) list += $"\n\u2026and {findings.Count - 10} more";
+                if (!await _dialogs.ConfirmAsync("Possible secrets detected",
+                        $"The staged changes appear to contain secrets:\n\n{list}\n\nCommit anyway? (Add 'gitdevex:allow' to a line to ignore it.)"))
+                {
+                    StatusText = "Commit cancelled: possible secrets in staged changes.";
+                    return;
+                }
+            }
             _git.Commit(CommitMessage.Trim(), Amend);
             CommitMessage = "";
             Amend = false;
@@ -869,10 +882,27 @@ public partial class RepoTabViewModel : ObservableObject, IDisposable
     private Task PullFastForward() => PullAsync(PullMode.FastForwardOnly);
 
     private Task PullAsync(PullMode mode) =>
-        RunRemoteAsync($"Pull ({mode})", (p, ct) => _git.PullAsync(mode, p, ct), includeStatus: true);
+        RunOperationAsync($"Pull ({mode})", (p, ct) => _git.PullAsync(mode, p, ct));
 
     [RelayCommand(CanExecute = nameof(CanRemote))]
     private Task Push() => RunRemoteAsync("Push", (p, ct) => _git.PushAsync(p, ct), includeStatus: false);
+
+    [RelayCommand(CanExecute = nameof(CanRemote))]
+    private async Task ForcePush()
+    {
+        if (!await _dialogs.ConfirmAsync("Force push",
+                "Force push (with lease) rewrites the remote branch. It is refused if someone else pushed in the meantime. Continue?"))
+            return;
+        await RunRemoteAsync("Force push", (p, ct) => _git.PushAsync(p, ct, forceWithLease: true), includeStatus: false);
+    }
+
+    [RelayCommand]
+    private async Task OpenPullRequests()
+    {
+        var vm = new PullRequestsViewModel(_git, _dialogs, branch => Run(() => _git.Checkout(branch)));
+        await _dialogs.ShowPullRequestsAsync(vm);
+        TryRefresh(includeStatus: true);
+    }
 
     [RelayCommand]
     private void CancelOperation() => _cts?.Cancel();

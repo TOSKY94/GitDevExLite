@@ -1,0 +1,148 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:GitDevExLite.App.ViewModels"
+        xmlns:h="using:GitDevExLite.Core.Hosting"
+        x:Class="GitDevExLite.App.Views.PullRequestsWindow"
+        x:DataType="vm:PullRequestsViewModel"
+        Title="Pull requests" Width="1180" Height="740"
+        WindowStartupLocation="CenterOwner">
+  <DockPanel>
+    <Border DockPanel.Dock="Bottom" Padding="8,4" BorderThickness="0,1,0,0" BorderBrush="#33FFFFFF">
+      <DockPanel>
+        <ProgressBar DockPanel.Dock="Right" Width="120" IsIndeterminate="True" IsVisible="{Binding IsBusy}" />
+        <TextBlock Text="{Binding Status}" Opacity="0.8" TextWrapping="Wrap" />
+      </DockPanel>
+    </Border>
+
+    <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Spacing="8" Margin="8">
+      <TextBlock Text="{Binding RepoName}" FontWeight="SemiBold" VerticalAlignment="Center" />
+      <ComboBox ItemsSource="{x:Static vm:PullRequestsViewModel.Filters}" SelectedIndex="{Binding FilterIndex}" />
+      <Button Content="Refresh" Command="{Binding RefreshCommand}" />
+    </StackPanel>
+
+    <TabControl>
+      <TabItem Header="Pull requests">
+        <Grid ColumnDefinitions="340,6,*" Margin="6">
+          <ListBox Grid.Column="0" ItemsSource="{Binding Items}" SelectedItem="{Binding Selected}">
+            <ListBox.ItemTemplate>
+              <DataTemplate x:DataType="h:PullRequest">
+                <StackPanel Margin="0,2">
+                  <TextBlock Text="{Binding Title}" TextTrimming="CharacterEllipsis" />
+                  <TextBlock Opacity="0.6" FontSize="11">
+                    <Run Text="#" /><Run Text="{Binding Number}" /><Run Text="  " /><Run Text="{Binding Author}" /><Run Text="  " /><Run Text="{Binding SourceBranch}" /><Run Text=" → " /><Run Text="{Binding TargetBranch}" />
+                  </TextBlock>
+                </StackPanel>
+              </DataTemplate>
+            </ListBox.ItemTemplate>
+          </ListBox>
+          <GridSplitter Grid.Column="1" />
+
+          <Grid Grid.Column="2" RowDefinitions="Auto,*,Auto">
+            <StackPanel Grid.Row="0" Orientation="Horizontal" Spacing="6" Margin="0,0,0,6">
+              <Button Content="Checkout" Command="{Binding CheckoutCommand}" ToolTip.Tip="Fetch the PR branch and check it out locally" />
+              <Button Content="Copy link" Command="{Binding CopyLinkCommand}" />
+              <TextBlock Text="{Binding ReviewSummary}" VerticalAlignment="Center" Opacity="0.7" Margin="8,0" />
+            </StackPanel>
+
+            <TabControl Grid.Row="1">
+              <TabItem Header="Description">
+                <ScrollViewer><TextBox Text="{Binding Description}" IsReadOnly="True" TextWrapping="Wrap" BorderThickness="0" /></ScrollViewer>
+              </TabItem>
+              <TabItem Header="Commits">
+                <ListBox ItemsSource="{Binding Commits}">
+                  <ListBox.ItemTemplate>
+                    <DataTemplate x:DataType="vm:CommitRow">
+                      <Grid ColumnDefinitions="70,*,140">
+                        <TextBlock Grid.Column="0" Text="{Binding ShortSha}" FontFamily="Consolas,Menlo,monospace" Foreground="#8AB4F8" />
+                        <TextBlock Grid.Column="1" Text="{Binding Message}" TextTrimming="CharacterEllipsis" />
+                        <TextBlock Grid.Column="2" Text="{Binding Author}" Opacity="0.6" />
+                      </Grid>
+                    </DataTemplate>
+                  </ListBox.ItemTemplate>
+                </ListBox>
+              </TabItem>
+              <TabItem Header="Files">
+                <Grid ColumnDefinitions="300,6,*">
+                  <ListBox Grid.Column="0" ItemsSource="{Binding Files}" SelectedItem="{Binding SelectedFile}">
+                    <ListBox.ItemTemplate>
+                      <DataTemplate x:DataType="h:PrFile">
+                        <StackPanel>
+                          <TextBlock Text="{Binding Path}" TextTrimming="CharacterEllipsis" />
+                          <TextBlock Opacity="0.6" FontSize="11">
+                            <Run Text="{Binding Status}" /><Run Text="  +" /><Run Text="{Binding Additions}" /><Run Text=" -" /><Run Text="{Binding Deletions}" />
+                          </TextBlock>
+                        </StackPanel>
+                      </DataTemplate>
+                    </ListBox.ItemTemplate>
+                  </ListBox>
+                  <GridSplitter Grid.Column="1" />
+                  <ListBox Grid.Column="2" ItemsSource="{Binding Patch}" SelectedItem="{Binding SelectedPatchRow}"
+                           FontFamily="Consolas,Menlo,monospace">
+                    <ListBox.ItemTemplate>
+                      <DataTemplate x:DataType="vm:PatchRow">
+                        <TextBlock Text="{Binding Text}" Foreground="{Binding Foreground}" />
+                      </DataTemplate>
+                    </ListBox.ItemTemplate>
+                  </ListBox>
+                </Grid>
+              </TabItem>
+              <TabItem Header="Comments">
+                <ListBox ItemsSource="{Binding Comments}" SelectedItem="{Binding SelectedComment}">
+                  <ListBox.ItemTemplate>
+                    <DataTemplate x:DataType="vm:CommentRow">
+                      <StackPanel Margin="{Binding Indent}">
+                        <TextBlock Text="{Binding Header}" Opacity="0.6" FontSize="11" />
+                        <TextBlock Text="{Binding Body}" TextWrapping="Wrap" />
+                      </StackPanel>
+                    </DataTemplate>
+                  </ListBox.ItemTemplate>
+                </ListBox>
+              </TabItem>
+              <TabItem Header="Checks">
+                <ListBox ItemsSource="{Binding Checks}">
+                  <ListBox.ItemTemplate>
+                    <DataTemplate x:DataType="vm:CheckRow">
+                      <Grid ColumnDefinitions="90,*">
+                        <TextBlock Grid.Column="0" Text="{Binding State}" FontWeight="SemiBold" />
+                        <TextBlock Grid.Column="1" Text="{Binding Name}" />
+                      </Grid>
+                    </DataTemplate>
+                  </ListBox.ItemTemplate>
+                </ListBox>
+              </TabItem>
+            </TabControl>
+
+            <StackPanel Grid.Row="2" Spacing="6" Margin="0,6,0,0">
+              <TextBox Text="{Binding CommentText}" AcceptsReturn="True" Height="70" TextWrapping="Wrap"
+                       Watermark="Comment, review note or reply (select a diff line or a comment first when needed)" />
+              <WrapPanel>
+                <Button Content="Comment" Command="{Binding AddCommentCommand}" Margin="0,0,6,0" />
+                <Button Content="Comment on selected line" Command="{Binding CommentOnLineCommand}" Margin="0,0,6,0" />
+                <Button Content="Reply to selected comment" Command="{Binding ReplyCommand}" Margin="0,0,6,0" />
+                <Button Content="Approve" Command="{Binding ApproveCommand}" Margin="0,0,6,0" />
+                <Button Content="Request changes" Command="{Binding RequestChangesCommand}" Margin="0,0,16,0" />
+                <ComboBox ItemsSource="{x:Static vm:PullRequestsViewModel.MergeMethods}" SelectedIndex="{Binding MergeMethodIndex}" Margin="0,0,6,0" />
+                <Button Content="Merge..." Command="{Binding MergeCommand}" />
+              </WrapPanel>
+            </StackPanel>
+          </Grid>
+        </Grid>
+      </TabItem>
+
+      <TabItem Header="Create from current branch">
+        <StackPanel Margin="12" Spacing="8" MaxWidth="720" HorizontalAlignment="Left">
+          <Grid ColumnDefinitions="*,*">
+            <StackPanel Grid.Column="0"><TextBlock Text="Source branch" /><TextBox Text="{Binding NewSource}" /></StackPanel>
+            <StackPanel Grid.Column="1"><TextBlock Text="Target branch" /><TextBox Text="{Binding NewTarget}" /></StackPanel>
+          </Grid>
+          <TextBlock Text="Title" />
+          <TextBox Text="{Binding NewTitle}" />
+          <TextBlock Text="Description" />
+          <TextBox Text="{Binding NewBody}" AcceptsReturn="True" Height="220" TextWrapping="Wrap" />
+          <CheckBox Content="Create as draft" IsChecked="{Binding NewDraft}" />
+          <Button Content="Push branch and create pull request" Command="{Binding CreatePrCommand}" />
+        </StackPanel>
+      </TabItem>
+    </TabControl>
+  </DockPanel>
+</Window>

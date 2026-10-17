@@ -49,6 +49,7 @@ public interface IDialogService
 
     Task ShowFileHistoryAsync(FileHistoryViewModel history, bool startOnBlame);
     Task ShowRepoToolsAsync(RepoToolsViewModel tools);
+    Task ShowPullRequestsAsync(PullRequestsViewModel pullRequests);
 }
 
 /// <summary>Observable options shared by the shell and every tab.</summary>

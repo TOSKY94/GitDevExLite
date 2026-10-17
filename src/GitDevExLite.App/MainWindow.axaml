@@ -24,6 +24,8 @@
         </Menu>
         <Button Content="Fetch" Command="{Binding SelectedTab.FetchCommand}" />
         <Button Content="Push" Command="{Binding SelectedTab.PushCommand}" />
+        <Button Content="Force push..." Command="{Binding SelectedTab.ForcePushCommand}" ToolTip.Tip="Push with --force-with-lease" />
+        <Button Content="Pull requests..." Command="{Binding SelectedTab.OpenPullRequestsCommand}" ToolTip.Tip="GitHub and Azure DevOps pull requests" />
         <Button Content="Stash..." Command="{Binding SelectedTab.StashCommand}" />
         <Button Content="Undo" Command="{Binding SelectedTab.UndoCommand}" ToolTip.Tip="Undo the last operation using the reflog" />
         <Button Content="Tools..." Command="{Binding SelectedTab.OpenToolsCommand}" ToolTip.Tip="Reflog, submodules, worktrees" />
