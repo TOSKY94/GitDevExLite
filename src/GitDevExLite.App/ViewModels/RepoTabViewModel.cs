@@ -4,7 +4,6 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using GitDevExLite.Core.Diff;
 using GitDevExLite.Core.Graph;
-using GitDevExLite.Core.Hosting;
 using GitDevExLite.Core.Models;
 using GitDevExLite.Core.Services;
 
@@ -12,7 +11,11 @@ namespace GitDevExLite.App.ViewModels;
 
 public partial class RepoTabViewModel : ObservableObject, IDisposable
 {
+    public sealed record PullRequestFilterOption(PullRequestFilterKind Value, string Label);
+
     private readonly IGitService _git;
+    private readonly IPullRequestService _pullRequests;
+    private readonly ISecretScanner _secretScanner;
     private readonly IDialogService _dialogs;
     private readonly RemoteOptions _options;
     private CancellationTokenSource? _cts;
@@ -21,16 +24,20 @@ public partial class RepoTabViewModel : ObservableObject, IDisposable
     private IReadOnlyList<CommitInfo> _commits = Array.Empty<CommitInfo>();
     private bool _suppressFileSelection;
 
-    public RepoTabViewModel(IGitService git, IDialogService dialogs, RemoteOptions options)
+    public RepoTabViewModel(IGitService git, IPullRequestService pullRequests, ISecretScanner secretScanner, IDialogService dialogs, RemoteOptions options)
     {
         _git = git;
+        _pullRequests = pullRequests;
+        _secretScanner = secretScanner;
         _dialogs = dialogs;
         _options = options;
         Selection.Changed += (_, _) =>
         {
             OnPropertyChanged(nameof(SelectedLineCount));
             OnPropertyChanged(nameof(SelectionActionText));
+                OnPropertyChanged(nameof(CanCommentSelectedPullRequestInline));
             StageSelectedCommand.NotifyCanExecuteChanged();
+                AddInlinePullRequestCommentCommand.NotifyCanExecuteChanged();
         };
         MenuProvider = BuildMenu;
     }
@@ -44,10 +51,45 @@ public partial class RepoTabViewModel : ObservableObject, IDisposable
     public ObservableCollection<ChangedFile> CommitFiles { get; } = new();
     public ObservableCollection<FileChange> Unstaged { get; } = new();
     public ObservableCollection<FileChange> Staged { get; } = new();
+    public ObservableCollection<PullRequestListItem> PullRequests { get; } = new();
+    public ObservableCollection<PullRequestCommit> PullRequestCommits { get; } = new();
+    public ObservableCollection<PullRequestStatusCheck> PullRequestStatusChecks { get; } = new();
+    public ObservableCollection<PullRequestThread> PullRequestThreads { get; } = new();
+    public IReadOnlyList<PullRequestFilterOption> PullRequestFilters { get; } =
+    [
+        new(PullRequestFilterKind.All, "All"),
+        new(PullRequestFilterKind.Mine, "Mine"),
+        new(PullRequestFilterKind.ReviewRequested, "Review requested")
+    ];
     public LineSelection Selection { get; } = new();
     public Func<GraphRow, IReadOnlyList<ContextAction>> MenuProvider { get; }
     public int SelectedLineCount => Selection.Lines.Count;
     public string SelectionActionText => $"{(DiffStaged ? "Unstage" : "Stage")} selected lines ({SelectedLineCount})";
+    public bool HasHostedRepository => HostedRepository is not null;
+    public bool CanSignInToProvider => HostedRepository is not null && !IsProviderAuthenticated;
+    public bool IsProviderAuthenticated => ProviderSession?.IsAuthenticated == true;
+    public bool HasPullRequestDetail => PullRequestDetail is not null;
+    public bool CanCreatePullRequest => ProviderCapabilities.CanCreatePullRequest && HostedRepository is not null;
+    public bool CanCheckoutSelectedPullRequest => ProviderCapabilities.CanCheckoutPullRequest && SelectedPullRequest is not null;
+    public bool CanReviewSelectedPullRequest => ProviderCapabilities.CanReview && SelectedPullRequest is not null;
+    public bool CanMergeSelectedPullRequest => ProviderCapabilities.CanMerge && SelectedPullRequest is not null;
+        public bool CanCommentSelectedPullRequestInline =>
+            ProviderCapabilities.CanCommentInline &&
+            SelectedPullRequest is not null &&
+            !ShowWorkingDirectory &&
+            ActiveDiff is not null &&
+            Selection.Lines.Count > 0;
+    public string ProviderSummary => HostedRepository is null
+        ? "No supported PR provider detected"
+        : IsProviderAuthenticated
+            ? $"{HostedRepository.Provider}: signed in as {ProviderSession?.Account.DisplayName ?? HostedRepository.DisplayName}"
+            : $"{HostedRepository.Provider}: sign in required";
+    public string PullRequestDetailTitle => PullRequestDetail is null
+        ? ""
+        : $"PR #{PullRequestDetail.Summary.Number}: {PullRequestDetail.Summary.Title}";
+    public string PullRequestDetailSummary => PullRequestDetail is null
+        ? ""
+        : $"{PullRequestDetail.Summary.Author}  {PullRequestDetail.Summary.SourceBranch} -> {PullRequestDetail.Summary.TargetBranch}  {PullRequestDetail.Summary.Status}";
 
     [ObservableProperty] private string _header = "(empty)";
     [ObservableProperty] private Dictionary<string, List<RefInfo>> _refsByCommit = new();
@@ -64,6 +106,12 @@ public partial class RepoTabViewModel : ObservableObject, IDisposable
     [ObservableProperty] private FileChange? _selectedUnstaged;
     [ObservableProperty] private FileChange? _selectedStaged;
     [ObservableProperty] private bool _showWorkingDirectory;
+    [ObservableProperty] private HostedRepositoryId? _hostedRepository;
+    [ObservableProperty] private ProviderSession? _providerSession;
+    [ObservableProperty] private ProviderCapabilities _providerCapabilities = ProviderCapabilities.None;
+    [ObservableProperty] private PullRequestFilterKind _pullRequestFilter = PullRequestFilterKind.All;
+    [ObservableProperty] private PullRequestListItem? _selectedPullRequest;
+    [ObservableProperty] private PullRequestDetail? _pullRequestDetail;
 
     [ObservableProperty] private FileDiff? _activeDiff;
     [ObservableProperty] private bool _diffStaged;
@@ -147,6 +195,218 @@ public partial class RepoTabViewModel : ObservableObject, IDisposable
     [RelayCommand]
     private void Refresh() => RefreshCore(keepSelection: false, includeStatus: true);
 
+    [RelayCommand]
+    private async Task SignInProvider()
+    {
+        if (HostedRepository is null) return;
+        try
+        {
+            if (HostedRepository.Provider is HostingProviderKind.GitHub or HostingProviderKind.AzureDevOps)
+            {
+                var choice = await _dialogs.PromptCredentialsAsync(new CredentialRequest(
+                    $"https://{HostedRepository.Host}/{HostedRepository.Owner}/{HostedRepository.Name}",
+                    $"Sign in to {HostedRepository.Provider} for {HostedRepository.DisplayName} using a personal access token.",
+                    false,
+                    false));
+                if (choice is null) return;
+                if (choice.UseGcm)
+                    throw new InvalidOperationException($"{HostedRepository.Provider} pull request sign-in currently requires a personal access token.");
+                await GitCredentials.StoreTokenAsync("https", HostedRepository.Host, choice.Username ?? "PAT", choice.Token ?? "", CancellationToken.None);
+            }
+
+            ProviderSession = await _pullRequests.SignInAsync(HostedRepository, CancellationToken.None);
+            ProviderCapabilities = _pullRequests.GetCapabilities(HostedRepository, ProviderSession);
+            OnPropertyChanged(nameof(CanSignInToProvider));
+            OnPropertyChanged(nameof(IsProviderAuthenticated));
+            OnPropertyChanged(nameof(ProviderSummary));
+            StatusText = $"Signed in to {HostedRepository.Provider}.";
+            await RefreshPullRequestsAsync();
+        }
+        catch (Exception ex)
+        {
+            StatusText = ex.Message;
+        }
+    }
+
+    [RelayCommand]
+    private Task RefreshPullRequests() => RefreshPullRequestsAsync();
+
+    [RelayCommand(CanExecute = nameof(CanCreatePullRequest))]
+    private async Task CreatePullRequest()
+    {
+        if (HostedRepository is null) return;
+
+        var sourceBranch = CurrentBranchName;
+        var targetBranch = (await _dialogs.PromptAsync("Create pull request", "Target branch:", "main"))?.Trim();
+        if (string.IsNullOrWhiteSpace(targetBranch)) return;
+
+        CreatePullRequestDraft draft;
+        try
+        {
+            draft = await _pullRequests.CreateDraftAsync(HostedRepository, sourceBranch, targetBranch, CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            StatusText = ex.Message;
+            return;
+        }
+
+        var title = (await _dialogs.PromptAsync("Create pull request", "Title:", draft.Title))?.Trim();
+        if (string.IsNullOrWhiteSpace(title)) return;
+        var description = await _dialogs.PromptAsync("Create pull request", "Description:", draft.Description) ?? "";
+        var isDraft = await _dialogs.ConfirmAsync(
+            "Create pull request",
+            draft.IsDraft
+                ? "Create this pull request as a draft?"
+                : "Create this pull request as a draft instead of ready for review?");
+
+        var secretMatches = _secretScanner.Scan(_git, Staged.Concat(Unstaged).ToList());
+        if (secretMatches.Count > 0)
+        {
+            var preview = string.Join("\n", secretMatches.Take(5).Select(m =>
+                $"{m.Path}:{m.LineNumber} [{m.Rule}] {m.Preview}"));
+            var suffix = secretMatches.Count > 5 ? $"\n...and {secretMatches.Count - 5} more" : "";
+            var proceed = await _dialogs.ConfirmAsync(
+                "Potential secrets detected",
+                $"Potential secrets were detected in the files included in this pull request:\n\n{preview}{suffix}\n\nCreate the pull request anyway?");
+            if (!proceed)
+            {
+                StatusText = "PR creation cancelled due to potential secrets.";
+                return;
+            }
+        }
+
+        try
+        {
+            IsBusy = true;
+            var created = await _pullRequests.CreateAsync(
+                HostedRepository,
+                new CreatePullRequestRequest(title, description, draft.SourceBranch, draft.TargetBranch, isDraft),
+                CancellationToken.None);
+            await RefreshPullRequestsAsync();
+            SelectedPullRequest = PullRequests.FirstOrDefault(pr => pr.Id == created.Id) ?? created;
+            StatusText = $"Created PR #{created.Number}.";
+        }
+        catch (Exception ex)
+        {
+            StatusText = ex.Message;
+        }
+        finally
+        {
+            IsBusy = false;
+        }
+    }
+
+    [RelayCommand(CanExecute = nameof(CanCheckoutSelectedPullRequest))]
+    private async Task CheckoutPullRequest()
+    {
+        if (HostedRepository is null || SelectedPullRequest is null) return;
+
+        var localName = (await _dialogs.PromptAsync(
+            "Check out pull request",
+            "Local branch name:",
+            SelectedPullRequest.SourceBranch))?.Trim();
+        if (string.IsNullOrWhiteSpace(localName)) return;
+
+        try
+        {
+            await RunRemoteAsync(
+                $"Checkout PR #{SelectedPullRequest.Number}",
+                (p, ct) => _pullRequests.CheckoutAsync(
+                    HostedRepository,
+                    new PullRequestCheckoutRequest(SelectedPullRequest.Id, SelectedPullRequest.SourceBranch, localName),
+                    _git,
+                    p,
+                    ct),
+                includeStatus: true);
+            StatusText = $"Checked out PR #{SelectedPullRequest.Number} to '{localName}'.";
+        }
+        catch (Exception ex)
+        {
+            StatusText = ex.Message;
+        }
+    }
+
+    [RelayCommand(CanExecute = nameof(CanReviewSelectedPullRequest))]
+    private Task ApprovePullRequest() => SubmitPullRequestReviewAsync(PullRequestReviewDecision.Approve, "Approve pull request", "Approval comment (optional):");
+
+    [RelayCommand(CanExecute = nameof(CanReviewSelectedPullRequest))]
+    private Task RequestPullRequestChanges() => SubmitPullRequestReviewAsync(PullRequestReviewDecision.RequestChanges, "Request changes", "Review comment:");
+
+    [RelayCommand(CanExecute = nameof(CanReviewSelectedPullRequest))]
+    private Task CommentOnPullRequest() => SubmitPullRequestReviewAsync(PullRequestReviewDecision.Comment, "Comment on pull request", "Comment:");
+
+    [RelayCommand(CanExecute = nameof(CanMergeSelectedPullRequest))]
+    private async Task MergePullRequest()
+    {
+        if (HostedRepository is null || SelectedPullRequest is null) return;
+
+        var confirmed = await _dialogs.ConfirmAsync(
+            "Merge pull request",
+            $"Merge PR #{SelectedPullRequest.Number} '{SelectedPullRequest.Title}' as a squash commit?");
+        if (!confirmed) return;
+
+        try
+        {
+            IsBusy = true;
+            await _pullRequests.MergeAsync(
+                HostedRepository,
+                SelectedPullRequest.Id,
+                new PullRequestMergeRequest(PullRequestMergeStrategy.Squash, DeleteSourceBranch: false),
+                CancellationToken.None);
+            await RefreshPullRequestsAsync();
+            if (SelectedPullRequest is { } selected)
+                await LoadPullRequestDetailAsync(selected);
+            StatusText = $"Merged PR #{SelectedPullRequest.Number}.";
+        }
+        catch (Exception ex)
+        {
+            StatusText = ex.Message;
+        }
+        finally
+        {
+            IsBusy = false;
+        }
+    }
+
+    [RelayCommand(CanExecute = nameof(CanCommentSelectedPullRequestInline))]
+    private async Task AddInlinePullRequestComment()
+    {
+        if (HostedRepository is null || SelectedPullRequest is null || ActiveDiff is null || Selection.Lines.Count == 0)
+            return;
+
+        var anchor = BuildSelectedPullRequestAnchor(ActiveDiff, Selection.Lines);
+        if (anchor is null)
+        {
+            StatusText = "Select changed diff lines before adding an inline comment.";
+            return;
+        }
+
+        var body = await _dialogs.PromptAsync("Inline pull request comment", "Comment:", "");
+        if (string.IsNullOrWhiteSpace(body)) return;
+
+        try
+        {
+            IsBusy = true;
+            await _pullRequests.AddInlineCommentAsync(
+                HostedRepository,
+                SelectedPullRequest.Id,
+                new PullRequestCommentDraft(anchor, body.Trim()),
+                CancellationToken.None);
+            await LoadPullRequestDetailAsync(SelectedPullRequest);
+            Selection.Clear();
+            StatusText = $"Added an inline comment to PR #{SelectedPullRequest.Number}.";
+        }
+        catch (Exception ex)
+        {
+            StatusText = ex.Message;
+        }
+        finally
+        {
+            IsBusy = false;
+        }
+    }
+
     private void RefreshCore(bool keepSelection, bool includeStatus, bool quiet = false)
     {
         if (_git.RepositoryPath is null) return;
@@ -159,6 +419,7 @@ public partial class RepoTabViewModel : ObservableObject, IDisposable
         Replace(Tags, refs.Where(r => r.Kind == RefKind.Tag).OrderByDescending(r => r.Name));
         Replace(Stashes, _git.GetStashes());
         RefsByCommit = refs.GroupBy(r => r.TargetSha).ToDictionary(g => g.Key, g => g.ToList());
+        RefreshPullRequestContext();
 
         _commits = _git.GetCommits();
         Graph = GraphLayout.Build(_commits);
@@ -170,6 +431,57 @@ public partial class RepoTabViewModel : ObservableObject, IDisposable
         Header = new DirectoryInfo(RepositoryPath!).Name;
         if (!quiet) StatusText = $"{_commits.Count} commits, {Graph.LaneCount} lanes";
         OnPropertyChanged(nameof(RepositoryPath));
+    }
+
+    private void RefreshPullRequestContext()
+    {
+        HostedRepository = _pullRequests.ResolveRepository(_git);
+        ProviderSession = HostedRepository is null ? null : _pullRequests.GetSession(HostedRepository);
+        ProviderCapabilities = HostedRepository is null
+            ? ProviderCapabilities.None
+            : _pullRequests.GetCapabilities(HostedRepository, ProviderSession);
+        OnPropertyChanged(nameof(HasHostedRepository));
+        OnPropertyChanged(nameof(CanSignInToProvider));
+        OnPropertyChanged(nameof(IsProviderAuthenticated));
+        OnPropertyChanged(nameof(ProviderSummary));
+
+        if (!ProviderCapabilities.CanListPullRequests)
+        {
+            PullRequests.Clear();
+            SelectedPullRequest = null;
+        }
+    }
+
+    partial void OnProviderSessionChanged(ProviderSession? value)
+    {
+        OnPropertyChanged(nameof(CanSignInToProvider));
+        OnPropertyChanged(nameof(IsProviderAuthenticated));
+        OnPropertyChanged(nameof(ProviderSummary));
+        OnPropertyChanged(nameof(CanCommentSelectedPullRequestInline));
+        NotifyPullRequestActionStateChanged();
+    }
+
+    partial void OnProviderCapabilitiesChanged(ProviderCapabilities value)
+    {
+        OnPropertyChanged(nameof(CanCreatePullRequest));
+        OnPropertyChanged(nameof(CanCommentSelectedPullRequestInline));
+        NotifyPullRequestActionStateChanged();
+    }
+
+    partial void OnHostedRepositoryChanged(HostedRepositoryId? value)
+    {
+        OnPropertyChanged(nameof(HasHostedRepository));
+        OnPropertyChanged(nameof(CanSignInToProvider));
+        OnPropertyChanged(nameof(ProviderSummary));
+        OnPropertyChanged(nameof(CanCreatePullRequest));
+        OnPropertyChanged(nameof(CanCommentSelectedPullRequestInline));
+        NotifyPullRequestActionStateChanged();
+    }
+
+    partial void OnPullRequestFilterChanged(PullRequestFilterKind value)
+    {
+        if (ProviderCapabilities.CanListPullRequests)
+            _ = RefreshPullRequestsAsync();
     }
 
     // ---- search -------------------------------------------------------------
@@ -208,6 +520,7 @@ public partial class RepoTabViewModel : ObservableObject, IDisposable
 
     partial void OnSelectedRowChanged(GraphRow? value)
     {
+        ClearPullRequestDetail();
         CommitFiles.Clear();
         DetailHeading = "";
         _detailSha = value?.Commit.Sha;
@@ -221,11 +534,179 @@ public partial class RepoTabViewModel : ObservableObject, IDisposable
     partial void OnSelectedStashChanged(StashInfo? value)
     {
         if (value is null) return;
+        ClearPullRequestDetail();
         SelectedRow = null;
         ShowWorkingDirectory = false;
         _detailSha = value.Sha;
         DetailHeading = $"Stash: {value.Message}";
         LoadDetailFiles(value.Sha);
+    }
+
+    partial void OnSelectedPullRequestChanged(PullRequestListItem? value)
+    {
+        NotifyPullRequestActionStateChanged();
+        OnPropertyChanged(nameof(CanCommentSelectedPullRequestInline));
+        if (value is null)
+        {
+            ClearPullRequestDetail();
+            return;
+        }
+        SelectedRow = null;
+        SelectedStash = null;
+        ShowWorkingDirectory = false;
+        _detailSha = null;
+        DetailHeading = $"PR #{value.Number}: {value.Title}";
+        CommitFiles.Clear();
+        ActiveDiff = null;
+        ActiveConflict = null;
+        _ = LoadPullRequestDetailAsync(value);
+    }
+
+    partial void OnPullRequestDetailChanged(PullRequestDetail? value)
+    {
+        OnPropertyChanged(nameof(HasPullRequestDetail));
+        OnPropertyChanged(nameof(PullRequestDetailTitle));
+        OnPropertyChanged(nameof(PullRequestDetailSummary));
+        OnPropertyChanged(nameof(CanCommentSelectedPullRequestInline));
+    }
+
+    private async Task RefreshPullRequestsAsync()
+    {
+        if (HostedRepository is null)
+        {
+            PullRequests.Clear();
+            SelectedPullRequest = null;
+            ClearPullRequestDetail();
+            return;
+        }
+
+        ProviderSession = _pullRequests.GetSession(HostedRepository);
+        ProviderCapabilities = _pullRequests.GetCapabilities(HostedRepository, ProviderSession);
+        OnPropertyChanged(nameof(CanSignInToProvider));
+        OnPropertyChanged(nameof(IsProviderAuthenticated));
+        OnPropertyChanged(nameof(ProviderSummary));
+
+        if (!ProviderCapabilities.CanListPullRequests)
+        {
+            PullRequests.Clear();
+            SelectedPullRequest = null;
+            ClearPullRequestDetail();
+            return;
+        }
+
+        try
+        {
+            IsBusy = true;
+            var items = await _pullRequests.ListAsync(HostedRepository, PullRequestFilter, CancellationToken.None);
+            Replace(PullRequests, items.OrderByDescending(pr => pr.UpdatedAt));
+            if (SelectedPullRequest is { } current)
+                SelectedPullRequest = PullRequests.FirstOrDefault(pr => pr.Id == current.Id) ?? PullRequests.FirstOrDefault();
+            else
+                SelectedPullRequest = PullRequests.FirstOrDefault();
+            StatusText = PullRequests.Count == 0 ? "No pull requests found." : $"Loaded {PullRequests.Count} pull request(s).";
+        }
+        catch (NotSupportedException ex)
+        {
+            PullRequests.Clear();
+            SelectedPullRequest = null;
+            ClearPullRequestDetail();
+            StatusText = ex.Message;
+        }
+        catch (Exception ex)
+        {
+            StatusText = ex.Message;
+        }
+        finally
+        {
+            IsBusy = false;
+        }
+    }
+
+    private async Task LoadPullRequestDetailAsync(PullRequestListItem selected)
+    {
+        if (HostedRepository is null)
+        {
+            ClearPullRequestDetail();
+            return;
+        }
+
+        try
+        {
+            IsBusy = true;
+            var detail = await _pullRequests.GetDetailAsync(HostedRepository, selected.Id, CancellationToken.None);
+            PullRequestDetail = detail;
+            Replace(CommitFiles, detail.Files);
+            Replace(PullRequestCommits, detail.Commits);
+            Replace(PullRequestStatusChecks, detail.StatusChecks);
+            Replace(PullRequestThreads, detail.Threads);
+            SelectedCommitFile = CommitFiles.FirstOrDefault();
+        }
+        catch (Exception ex)
+        {
+            ClearPullRequestDetail();
+            StatusText = ex.Message;
+        }
+        finally
+        {
+            IsBusy = false;
+        }
+    }
+
+    private void ClearPullRequestDetail()
+    {
+        PullRequestDetail = null;
+        PullRequestCommits.Clear();
+        PullRequestStatusChecks.Clear();
+        PullRequestThreads.Clear();
+    }
+
+    private async Task SubmitPullRequestReviewAsync(PullRequestReviewDecision decision, string title, string label)
+    {
+        if (HostedRepository is null || SelectedPullRequest is null) return;
+
+        var body = await _dialogs.PromptAsync(title, label, "");
+        if (body is null) return;
+
+        try
+        {
+            IsBusy = true;
+            await _pullRequests.SubmitReviewAsync(
+                HostedRepository,
+                SelectedPullRequest.Id,
+                new PullRequestReviewRequest(decision, body),
+                CancellationToken.None);
+            await LoadPullRequestDetailAsync(SelectedPullRequest);
+            StatusText = decision switch
+            {
+                PullRequestReviewDecision.Approve => $"Approved PR #{SelectedPullRequest.Number}.",
+                PullRequestReviewDecision.RequestChanges => $"Requested changes on PR #{SelectedPullRequest.Number}.",
+                _ => $"Commented on PR #{SelectedPullRequest.Number}."
+            };
+        }
+        catch (Exception ex)
+        {
+            StatusText = ex.Message;
+        }
+        finally
+        {
+            IsBusy = false;
+        }
+    }
+
+    private void NotifyPullRequestActionStateChanged()
+    {
+        OnPropertyChanged(nameof(CanCreatePullRequest));
+        OnPropertyChanged(nameof(CanCheckoutSelectedPullRequest));
+        OnPropertyChanged(nameof(CanReviewSelectedPullRequest));
+        OnPropertyChanged(nameof(CanMergeSelectedPullRequest));
+        OnPropertyChanged(nameof(CanCommentSelectedPullRequestInline));
+        CreatePullRequestCommand.NotifyCanExecuteChanged();
+        CheckoutPullRequestCommand.NotifyCanExecuteChanged();
+        ApprovePullRequestCommand.NotifyCanExecuteChanged();
+        RequestPullRequestChangesCommand.NotifyCanExecuteChanged();
+        CommentOnPullRequestCommand.NotifyCanExecuteChanged();
+        MergePullRequestCommand.NotifyCanExecuteChanged();
+        AddInlinePullRequestCommentCommand.NotifyCanExecuteChanged();
     }
 
     // A stash is stored as a commit, so its files and diffs reuse the commit machinery.
@@ -245,6 +726,7 @@ public partial class RepoTabViewModel : ObservableObject, IDisposable
     partial void OnSelectedCommitFileChanged(ChangedFile? value)
     {
         OnPropertyChanged(nameof(HasCurrentFile));
+        OnPropertyChanged(nameof(CanCommentSelectedPullRequestInline));
         if (ShowWorkingDirectory) return;
         if (value is null || _detailSha is null) { ActiveDiff = null; return; }
         try
@@ -265,6 +747,7 @@ public partial class RepoTabViewModel : ObservableObject, IDisposable
     {
         ActiveDiff = null;
         ActiveConflict = null;
+        OnPropertyChanged(nameof(CanCommentSelectedPullRequestInline));
         if (value)
         {
             RefreshStatus();
@@ -303,6 +786,7 @@ public partial class RepoTabViewModel : ObservableObject, IDisposable
     {
         Selection.Clear();
         OnPropertyChanged(nameof(HasCurrentFile));
+        OnPropertyChanged(nameof(CanCommentSelectedPullRequestInline));
     }
 
     partial void OnActiveConflictChanged(ConflictViewModel? value) => OnPropertyChanged(nameof(HasCurrentFile));
@@ -445,6 +929,50 @@ public partial class RepoTabViewModel : ObservableObject, IDisposable
 
     partial void OnDiffStagedChanged(bool value) => OnPropertyChanged(nameof(SelectionActionText));
 
+    private static PullRequestCommentAnchor? BuildSelectedPullRequestAnchor(FileDiff diff, IReadOnlySet<LineRef> selection)
+    {
+        var selectedLines = selection
+            .Select(lineRef => TryGetDiffLine(diff, lineRef))
+            .Where(line => line is not null && line.Kind is DiffLineKind.Added or DiffLineKind.Removed)
+            .Select(line => line!)
+            .ToList();
+        if (selectedLines.Count == 0)
+            return null;
+
+        var side = selectedLines.Any(line => line.Kind == DiffLineKind.Removed)
+            ? PullRequestCommentSide.Left
+            : PullRequestCommentSide.Right;
+        var lineNumbers = selectedLines
+            .Select(line => side == PullRequestCommentSide.Left ? line.OldNo : line.NewNo)
+            .Where(lineNumber => lineNumber is not null)
+            .Select(lineNumber => lineNumber!.Value)
+            .Distinct()
+            .OrderBy(lineNumber => lineNumber)
+            .ToArray();
+        if (lineNumbers.Length == 0)
+            return null;
+
+        return new PullRequestCommentAnchor(
+            diff.Path,
+            lineNumbers[0],
+            lineNumbers[^1],
+            side,
+            side == PullRequestCommentSide.Left ? lineNumbers[0] : null,
+            side == PullRequestCommentSide.Left ? lineNumbers[^1] : null);
+    }
+
+    private static DiffLine? TryGetDiffLine(FileDiff diff, LineRef lineRef)
+    {
+        if (lineRef.Hunk < 0 || lineRef.Hunk >= diff.Hunks.Count)
+            return null;
+
+        var hunk = diff.Hunks[lineRef.Hunk];
+        if (lineRef.Line < 0 || lineRef.Line >= hunk.Lines.Count)
+            return null;
+
+        return hunk.Lines[lineRef.Line];
+    }
+
     private void ApplyLines(IReadOnlySet<LineRef> lines)
     {
         if (ActiveDiff is null || lines.Count == 0) return;
@@ -462,22 +990,10 @@ public partial class RepoTabViewModel : ObservableObject, IDisposable
     }
 
     [RelayCommand(CanExecute = nameof(CanCommit))]
-    private async Task Commit()
+    private void Commit()
     {
         try
         {
-            var findings = Amend && Staged.Count == 0 ? Array.Empty<SecretFinding>() : SecretScanner.ScanStaged(_git);
-            if (findings.Count > 0)
-            {
-                var list = string.Join("\n", findings.Take(10).Select(f => $"\u2022 {f.Path}:{f.Line}  {f.Rule}  ({f.Preview})"));
-                if (findings.Count > 10) list += $"\n\u2026and {findings.Count - 10} more";
-                if (!await _dialogs.ConfirmAsync("Possible secrets detected",
-                        $"The staged changes appear to contain secrets:\n\n{list}\n\nCommit anyway? (Add 'gitdevex:allow' to a line to ignore it.)"))
-                {
-                    StatusText = "Commit cancelled: possible secrets in staged changes.";
-                    return;
-                }
-            }
             _git.Commit(CommitMessage.Trim(), Amend);
             CommitMessage = "";
             Amend = false;
@@ -894,14 +1410,6 @@ public partial class RepoTabViewModel : ObservableObject, IDisposable
                 "Force push (with lease) rewrites the remote branch. It is refused if someone else pushed in the meantime. Continue?"))
             return;
         await RunRemoteAsync("Force push", (p, ct) => _git.PushAsync(p, ct, forceWithLease: true), includeStatus: false);
-    }
-
-    [RelayCommand]
-    private async Task OpenPullRequests()
-    {
-        var vm = new PullRequestsViewModel(_git, _dialogs, branch => Run(() => _git.Checkout(branch)));
-        await _dialogs.ShowPullRequestsAsync(vm);
-        TryRefresh(includeStatus: true);
     }
 
     [RelayCommand]

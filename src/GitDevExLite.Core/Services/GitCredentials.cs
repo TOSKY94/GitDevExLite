@@ -62,6 +62,19 @@ public static partial class GitCredentials
         await GitProcess.RunAsync(null, new[] { "credential", "approve" }, null, ct, null, input);
     }
 
+    public static async Task StoreTokenAsync(string protocol, string host, string username, string token, CancellationToken ct)
+    {
+        RejectControlChars(protocol);
+        RejectControlChars(host);
+        RejectControlChars(username);
+        RejectControlChars(token);
+        if (protocol.Length == 0 || host.Length == 0 || username.Length == 0 || token.Length == 0)
+            throw new ArgumentException("Protocol, host, username and token are required.");
+
+        var input = $"protocol={protocol}\nhost={host}\nusername={username}\npassword={token}\n\n";
+        await GitProcess.RunAsync(null, new[] { "credential", "approve" }, null, ct, null, input);
+    }
+
     private static string BuildRequest(string url)
     {
         if (!TryParseHttp(url, out var protocol, out var host))

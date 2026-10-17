@@ -305,13 +305,6 @@ public partial class MainWindow : Window, IDialogService
         await new Views.RepoToolsWindow { DataContext = tools }.ShowDialog(this);
     }
 
-    public async Task ShowPullRequestsAsync(PullRequestsViewModel pullRequests)
-    {
-        var window = new Views.PullRequestsWindow { DataContext = pullRequests };
-        window.Opened += async (_, _) => await pullRequests.LoadAsync();
-        await window.ShowDialog(this);
-    }
-
     private static Window Dialog(string title, Control content) => new()
     {
         Title = title,

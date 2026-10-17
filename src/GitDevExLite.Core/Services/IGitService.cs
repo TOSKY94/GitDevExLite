@@ -20,6 +20,7 @@ public interface IGitService : IDisposable
     IReadOnlyList<ChangedFile> GetCommitChanges(string sha);
     FileDiff GetCommitDiff(string sha, string path);
     FileDiff GetWorkingDiff(string path, bool staged);
+    string? GetFileContent(string path, bool staged);
     void StageLines(FileDiff diff, IReadOnlySet<LineRef> lines);
     void UnstageLines(FileDiff diff, IReadOnlySet<LineRef> lines);
 

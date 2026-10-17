@@ -5,7 +5,7 @@ A GitKraken-style git client in C# (Avalonia + LibGit2Sharp).
 ```
 src/GitDevExLite.Core           git service (LibGit2Sharp), diff/patch building, commit-graph layout, settings store; no UI deps
 src/GitDevExLite.App            Avalonia MVVM desktop app (AvaloniaEdit + TextMate for diffs)
-src/tests/GitDevExLite.Core.Tests   unit tests (graph layout, patch builder, git service, search, settings)
+src/tests/GitDevExLite.Core.Tests   unit tests (graph layout, patch builder, git service, search, settings, hosted PR providers)
 ```
 
 ## Features
@@ -17,6 +17,10 @@ src/tests/GitDevExLite.Core.Tests   unit tests (graph layout, patch builder, git
 - **Graph search**: matches message, author, SHA prefix and branch name. Non-matching rows are dimmed and the arrows jump between matches.
 - **Live updates**: each tab watches its repo, so edits, commits, checkouts and ref changes made outside the app show up on their own (debounced, ignoring `bin/`, `obj/`, `node_modules/`). Your selection and ticked diff lines are kept unless the diff itself changed.
 - **Tabs and recents**: each repo opens in its own tab. The Recent menu lists the last 20 repos, and open tabs are restored on launch (stored in `%APPDATA%/GitDevExLite/settings.json`).
+- **Hosted pull requests**: GitHub and Azure DevOps remotes are detected automatically. Sign in with a personal access token, list open PRs, filter by all/mine/review requested, inspect description/commits/files/checks/threads, and create a PR from the current branch with a drafted title and description.
+- **PR actions**: check out a PR branch locally, approve, request changes, add a top-level review comment, and merge from inside the app.
+- **Inline PR comments**: when viewing a PR diff, select changed lines in the gutter and post an inline comment that syncs back to GitHub or Azure DevOps. New threads appear after the PR detail refreshes.
+- **Secret detection before PR creation**: staged and unstaged files are scanned for likely secrets before a PR is opened, and the app asks for confirmation before proceeding.
 - **Remotes**: Fetch, Pull (merge, rebase or fast-forward only) and Push run through the `git` CLI with a progress bar and Cancel. The first push of a branch sets its upstream; "Set upstream..." in the graph menu changes it later.
 - **Ahead/behind**: `↑n ↓m` next to local branches in the branch list and on graph badges.
 - **Clone**: the Clone dialog shows progress and can be cancelled; the new repo opens in a tab.
@@ -31,12 +35,12 @@ src/tests/GitDevExLite.Core.Tests   unit tests (graph layout, patch builder, git
 - **Undo**: the Undo button reverses the last operation recorded in the reflog (commit, merge, reset, pull, a whole rebase, or a branch switch) after showing exactly what it will do. It refuses when you have uncommitted changes or an operation is in progress, and pressing it again redoes the change. Tools... also lists the reflog so you can reset to any entry.
 - **Submodules and worktrees**: Tools... lists submodules (initialise, update, open in a tab) and worktrees (add for a new or existing branch, remove, prune, open in a tab).
 
-Hunk and line staging, and all remote operations, run the `git` CLI, so `git` must be on your PATH.
+Hunk and line staging, hosted-provider authentication storage, and remote operations reuse your local Git tooling, so `git` must be on your PATH.
 
 ## Run
 
 ```bash
-dotnet test src/GitDevExLite.slnx
+dotnet test src/tests/GitDevExLite.Core.Tests/GitDevExLite.Core.Tests.csproj
 dotnet run --project src/GitDevExLite.App -- path/to/a/repo
 ```
 

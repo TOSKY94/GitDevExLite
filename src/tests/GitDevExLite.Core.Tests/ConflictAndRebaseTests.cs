@@ -1,4 +1,4 @@
-using GitDevExLite.Core.Diff;
+﻿using GitDevExLite.Core.Diff;
 using GitDevExLite.Core.Models;
 using GitDevExLite.Core.Services;
 using LibGit2Sharp;

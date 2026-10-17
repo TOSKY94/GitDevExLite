@@ -15,7 +15,7 @@ public partial class App : Application
         if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
         {
             var window = new MainWindow();
-            var vm = new MainViewModel(() => new GitService(), window, new RepoSettingsStore());
+            var vm = new MainViewModel(() => new GitService(), new PullRequestService(), new SecretScanner(), window, new RepoSettingsStore());
             window.DataContext = vm;
             desktop.MainWindow = window;
 

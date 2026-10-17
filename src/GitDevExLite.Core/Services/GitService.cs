@@ -147,6 +147,28 @@ public sealed partial class GitService : IGitService
         return ToFileDiff(path, patch);
     }
 
+    public string? GetFileContent(string path, bool staged)
+    {
+        if (staged)
+        {
+            var entry = Repo.Index[path];
+            if (entry is null) return null;
+            var blob = Repo.Lookup<Blob>(entry.Id);
+            if (blob is null || blob.IsBinary) return null;
+
+            using var content = blob.GetContentStream();
+            using var reader = new StreamReader(content, Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
+            return reader.ReadToEnd();
+        }
+
+        var fullPath = Path.Combine(Repo.Info.WorkingDirectory, path.Replace('/', Path.DirectorySeparatorChar));
+        if (!File.Exists(fullPath)) return null;
+
+        var bytes = File.ReadAllBytes(fullPath);
+        if (bytes.Any(b => b == 0)) return null;
+        return File.ReadAllText(fullPath);
+    }
+
     public void StageLines(FileDiff diff, IReadOnlySet<LineRef> lines) => ApplySelection(diff, lines, reverse: false);
 
     public void UnstageLines(FileDiff diff, IReadOnlySet<LineRef> lines) => ApplySelection(diff, lines, reverse: true);
