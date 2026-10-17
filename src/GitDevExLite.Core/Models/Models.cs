@@ -18,4 +18,5 @@ public sealed record CommitInfo(
     public string ShortSha => Sha.Length >= 7 ? Sha[..7] : Sha;
 }
 
+/// <summary>A file with both staged and unstaged edits yields one entry per side.</summary>
 public sealed record FileChange(string Path, bool IsStaged, string Status);

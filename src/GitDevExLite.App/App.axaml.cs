@@ -14,11 +14,14 @@ public partial class App : Application
     {
         if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
         {
-            var vm = new MainViewModel(new GitService());
-            desktop.MainWindow = new MainWindow { DataContext = vm };
+            var window = new MainWindow();
+            var vm = new MainViewModel(() => new GitService(), window, new RepoSettingsStore());
+            window.DataContext = vm;
+            desktop.MainWindow = window;
 
+            vm.RestoreTabs();
             // `GitDevExLite.App <path-to-repo>` opens a repo straight away.
-            if (desktop.Args is { Length: > 0 }) vm.LoadRepository(desktop.Args[0]);
+            if (desktop.Args is { Length: > 0 }) vm.OpenRepository(desktop.Args[0]);
         }
         base.OnFrameworkInitializationCompleted();
     }
