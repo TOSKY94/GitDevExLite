@@ -1,36 +1,70 @@
 using System.Collections.ObjectModel;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
-using GitDevExLite.Core.Graph;
-using GitDevExLite.Core.Models;
 using GitDevExLite.Core.Services;
 
 namespace GitDevExLite.App.ViewModels;
 
 public partial class MainViewModel : ObservableObject
 {
-    private readonly IGitService _git;
+    private readonly Func<IGitService> _gitFactory;
+    private readonly IDialogService _dialogs;
+    private readonly RepoSettingsStore _store;
+    private readonly RepoSettings _settings;
 
-    public MainViewModel(IGitService git) => _git = git;
+    public MainViewModel(Func<IGitService> gitFactory, IDialogService dialogs, RepoSettingsStore store)
+    {
+        _gitFactory = gitFactory;
+        _dialogs = dialogs;
+        _store = store;
+        _settings = store.Load();
+        foreach (var r in _settings.RecentRepos) RecentRepos.Add(r);
+    }
 
-    public ObservableCollection<RefInfo> LocalBranches { get; } = new();
-    public ObservableCollection<RefInfo> RemoteBranches { get; } = new();
-    public ObservableCollection<RefInfo> Tags { get; } = new();
-    public ObservableCollection<StashInfo> Stashes { get; } = new();
+    public ObservableCollection<RepoTabViewModel> Tabs { get; } = new();
+    public ObservableCollection<string> RecentRepos { get; } = new();
 
-    [ObservableProperty] private Dictionary<string, List<RefInfo>> _refsByCommit = new();
+    [ObservableProperty] private RepoTabViewModel? _selectedTab;
     [ObservableProperty] private string _title = "GitDevExLite";
     [ObservableProperty] private string? _statusText = "Open a repository to begin.";
-    [ObservableProperty] private GraphLayoutResult? _graph;
-    [ObservableProperty] private GraphRow? _selectedRow;
-    [ObservableProperty] private RefInfo? _selectedBranch;
 
-    public void LoadRepository(string path)
+    partial void OnSelectedTabChanged(RepoTabViewModel? value)
+    {
+        Title = value is null ? "GitDevExLite" : $"{value.Header} - GitDevExLite";
+        SaveTabs();
+    }
+
+    /// <summary>Opens the repo in a new tab, or focuses the tab that already shows it.</summary>
+    public void OpenRepository(string path)
     {
         try
         {
-            _git.Open(path);
-            Refresh();
+            var existing = Tabs.FirstOrDefault(t => SamePath(t.RepositoryPath, path));
+            if (existing is not null)
+            {
+                SelectedTab = existing;
+                return;
+            }
+
+            var tab = new RepoTabViewModel(_gitFactory(), _dialogs);
+            tab.Open(path);
+            var resolved = tab.RepositoryPath!;
+
+            // The picked folder may be a subfolder of a repo that is already open.
+            var duplicate = Tabs.FirstOrDefault(t => SamePath(t.RepositoryPath, resolved));
+            if (duplicate is not null)
+            {
+                tab.Dispose();
+                SelectedTab = duplicate;
+                return;
+            }
+
+            Tabs.Add(tab);
+            SelectedTab = tab;
+            _settings.AddRecent(resolved);
+            RecentRepos.Clear();
+            foreach (var r in _settings.RecentRepos) RecentRepos.Add(r);
+            SaveTabs();
         }
         catch (Exception ex)
         {
@@ -38,46 +72,42 @@ public partial class MainViewModel : ObservableObject
         }
     }
 
-    [RelayCommand]
-    private void Refresh()
+    /// <summary>Reopens tabs saved by the previous session, skipping repos that no longer open.</summary>
+    public void RestoreTabs()
     {
-        if (_git.RepositoryPath is null) return;
-
-        var refs = _git.GetRefs();
-        Replace(LocalBranches, refs.Where(r => r.Kind == RefKind.LocalBranch).OrderBy(r => r.Name));
-        Replace(RemoteBranches, refs.Where(r => r.Kind == RefKind.RemoteBranch).OrderBy(r => r.Name));
-        Replace(Tags, refs.Where(r => r.Kind == RefKind.Tag).OrderByDescending(r => r.Name));
-        Replace(Stashes, _git.GetStashes());
-
-        RefsByCommit = refs.GroupBy(r => r.TargetSha).ToDictionary(g => g.Key, g => g.ToList());
-
-        var commits = _git.GetCommits();
-        Graph = GraphLayout.Build(commits);
-        SelectedRow = null;
-
-        var dir = new DirectoryInfo(_git.RepositoryPath.TrimEnd('/', '\\'));
-        Title = $"{dir.Name} - GitDevExLite";
-        StatusText = $"{commits.Count} commits, {Graph.LaneCount} lanes";
+        var active = _settings.ActiveTab;
+        foreach (var path in _settings.OpenTabs.ToList()) OpenRepository(path);
+        var tab = Tabs.FirstOrDefault(t => SamePath(t.RepositoryPath, active));
+        if (tab is not null) SelectedTab = tab;
     }
 
     [RelayCommand]
-    private void Checkout()
+    private void CloseTab(RepoTabViewModel? tab)
     {
-        if (SelectedBranch is not { Kind: RefKind.LocalBranch } b) return;
-        try
-        {
-            _git.Checkout(b.Name);
-            Refresh();
-        }
-        catch (Exception ex)
-        {
-            StatusText = ex.Message;
-        }
+        if (tab is null) return;
+        var index = Tabs.IndexOf(tab);
+        var wasSelected = SelectedTab == tab;
+        Tabs.Remove(tab);
+        tab.Dispose();
+        if (wasSelected || SelectedTab is null)
+            SelectedTab = Tabs.Count == 0 ? null : Tabs[Math.Min(index, Tabs.Count - 1)];
+        SaveTabs();
     }
 
-    private static void Replace<T>(ObservableCollection<T> target, IEnumerable<T> items)
+    [RelayCommand]
+    private void RefreshSelected() => SelectedTab?.RefreshCommand.Execute(null);
+
+    [RelayCommand]
+    private void CheckoutSelected() => SelectedTab?.CheckoutCommand.Execute(null);
+
+    private void SaveTabs()
     {
-        target.Clear();
-        foreach (var i in items) target.Add(i);
+        _settings.OpenTabs = Tabs.Select(t => t.RepositoryPath).OfType<string>().ToList();
+        _settings.ActiveTab = SelectedTab?.RepositoryPath;
+        _store.Save(_settings);
     }
+
+    private static bool SamePath(string? a, string? b) =>
+        a is not null && b is not null &&
+        string.Equals(a.TrimEnd('/', '\\'), b.TrimEnd('/', '\\'), StringComparison.OrdinalIgnoreCase);
 }

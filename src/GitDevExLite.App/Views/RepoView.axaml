@@ -1,0 +1,178 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:GitDevExLite.App.ViewModels"
+             xmlns:ctl="using:GitDevExLite.App.Controls"
+             xmlns:m="using:GitDevExLite.Core.Models"
+             x:Class="GitDevExLite.App.Views.RepoView"
+             x:DataType="vm:RepoTabViewModel">
+  <Grid ColumnDefinitions="220,Auto,*">
+    <ScrollViewer Grid.Column="0">
+      <StackPanel Margin="8" Spacing="4">
+        <Expander Header="Local" IsExpanded="True" HorizontalAlignment="Stretch">
+          <ListBox ItemsSource="{Binding LocalBranches}" SelectedItem="{Binding SelectedBranch}">
+            <ListBox.ItemTemplate>
+              <DataTemplate x:DataType="m:RefInfo">
+                <TextBlock Text="{Binding Name}" />
+              </DataTemplate>
+            </ListBox.ItemTemplate>
+          </ListBox>
+        </Expander>
+        <Expander Header="Remote" HorizontalAlignment="Stretch">
+          <ListBox ItemsSource="{Binding RemoteBranches}" SelectedItem="{Binding SelectedBranch}">
+            <ListBox.ItemTemplate>
+              <DataTemplate x:DataType="m:RefInfo">
+                <TextBlock Text="{Binding Name}" />
+              </DataTemplate>
+            </ListBox.ItemTemplate>
+          </ListBox>
+        </Expander>
+        <Expander Header="Tags" HorizontalAlignment="Stretch">
+          <ListBox ItemsSource="{Binding Tags}">
+            <ListBox.ItemTemplate>
+              <DataTemplate x:DataType="m:RefInfo">
+                <TextBlock Text="{Binding Name}" />
+              </DataTemplate>
+            </ListBox.ItemTemplate>
+          </ListBox>
+        </Expander>
+        <Expander Header="Stashes" HorizontalAlignment="Stretch">
+          <ListBox ItemsSource="{Binding Stashes}">
+            <ListBox.ItemTemplate>
+              <DataTemplate x:DataType="m:StashInfo">
+                <TextBlock Text="{Binding Message}" />
+              </DataTemplate>
+            </ListBox.ItemTemplate>
+          </ListBox>
+        </Expander>
+      </StackPanel>
+    </ScrollViewer>
+
+    <GridSplitter Grid.Column="1" Width="4" />
+
+    <Grid Grid.Column="2" RowDefinitions="Auto,*,Auto,*">
+      <!-- Search and mode toggle -->
+      <Grid Grid.Row="0" ColumnDefinitions="*,Auto,Auto,Auto,Auto" Margin="6">
+        <TextBox Grid.Column="0" Text="{Binding SearchText}"
+                 Watermark="Search message, author, SHA or branch" />
+        <Button Grid.Column="1" Content="&#x25B2;" Command="{Binding PreviousMatchCommand}" ToolTip.Tip="Previous match" />
+        <Button Grid.Column="2" Content="&#x25BC;" Command="{Binding NextMatchCommand}" ToolTip.Tip="Next match" />
+        <TextBlock Grid.Column="3" Text="{Binding SearchSummary}" VerticalAlignment="Center" Opacity="0.7" />
+        <ToggleButton Grid.Column="4" Content="Working directory"
+                      IsChecked="{Binding ShowWorkingDirectory, Mode=TwoWay}" />
+      </Grid>
+
+      <ScrollViewer Grid.Row="1" HorizontalScrollBarVisibility="Auto">
+        <ctl:CommitGraphControl Graph="{Binding Graph}"
+                                RefsByCommit="{Binding RefsByCommit}"
+                                MatchedShas="{Binding MatchedShas}"
+                                MenuProvider="{Binding MenuProvider}"
+                                SelectedRow="{Binding SelectedRow, Mode=TwoWay}" />
+      </ScrollViewer>
+
+      <GridSplitter Grid.Row="2" Height="4" HorizontalAlignment="Stretch" />
+
+      <!-- Details / working directory + diff -->
+      <Grid Grid.Row="3" ColumnDefinitions="320,Auto,*">
+        <!-- Commit mode -->
+        <Grid Grid.Column="0" RowDefinitions="Auto,*" Margin="8"
+              IsVisible="{Binding !ShowWorkingDirectory}">
+          <StackPanel Grid.Row="0" Spacing="4"
+                      IsVisible="{Binding SelectedRow, Converter={x:Static ObjectConverters.IsNotNull}}">
+            <TextBlock Text="{Binding SelectedRow.Commit.Summary}" FontWeight="SemiBold" TextWrapping="Wrap" />
+            <TextBlock Text="{Binding SelectedRow.Commit.Sha}" FontFamily="Consolas,Menlo,monospace" FontSize="11"
+                       Opacity="0.7" TextWrapping="Wrap" />
+            <TextBlock Opacity="0.7">
+              <Run Text="{Binding SelectedRow.Commit.AuthorName}" />
+              <Run Text="  " />
+              <Run Text="{Binding SelectedRow.Commit.When}" />
+            </TextBlock>
+            <TextBlock Text="Changed files" FontWeight="SemiBold" Margin="0,8,0,0" />
+          </StackPanel>
+          <ListBox Grid.Row="1" ItemsSource="{Binding CommitFiles}" SelectedItem="{Binding SelectedCommitFile}">
+            <ListBox.ItemTemplate>
+              <DataTemplate x:DataType="m:ChangedFile">
+                <StackPanel Orientation="Horizontal" Spacing="6">
+                  <TextBlock Text="{Binding Status}" Opacity="0.6" Width="60" />
+                  <TextBlock Text="{Binding Path}" />
+                </StackPanel>
+              </DataTemplate>
+            </ListBox.ItemTemplate>
+          </ListBox>
+        </Grid>
+
+        <!-- Working directory mode -->
+        <Grid Grid.Column="0" RowDefinitions="Auto,*,Auto,*,Auto" Margin="8"
+              IsVisible="{Binding ShowWorkingDirectory}">
+          <DockPanel Grid.Row="0">
+            <Button DockPanel.Dock="Right" Content="Stage all" Command="{Binding StageAllCommand}" />
+            <TextBlock Text="Unstaged" FontWeight="SemiBold" VerticalAlignment="Center" />
+          </DockPanel>
+          <ListBox Grid.Row="1" ItemsSource="{Binding Unstaged}" SelectedItem="{Binding SelectedUnstaged}">
+            <ListBox.ItemTemplate>
+              <DataTemplate x:DataType="m:FileChange">
+                <DockPanel>
+                  <Button DockPanel.Dock="Right" Content="+" Padding="6,0"
+                          ToolTip.Tip="Stage file"
+                          Command="{Binding $parent[UserControl].((vm:RepoTabViewModel)DataContext).StageFileCommand}"
+                          CommandParameter="{Binding}" />
+                  <TextBlock Text="{Binding Status}" Opacity="0.6" Width="64" DockPanel.Dock="Left" />
+                  <TextBlock Text="{Binding Path}" TextTrimming="CharacterEllipsis" />
+                </DockPanel>
+              </DataTemplate>
+            </ListBox.ItemTemplate>
+          </ListBox>
+
+          <DockPanel Grid.Row="2">
+            <Button DockPanel.Dock="Right" Content="Unstage all" Command="{Binding UnstageAllCommand}" />
+            <TextBlock Text="Staged" FontWeight="SemiBold" VerticalAlignment="Center" />
+          </DockPanel>
+          <ListBox Grid.Row="3" ItemsSource="{Binding Staged}" SelectedItem="{Binding SelectedStaged}">
+            <ListBox.ItemTemplate>
+              <DataTemplate x:DataType="m:FileChange">
+                <DockPanel>
+                  <Button DockPanel.Dock="Right" Content="&#x2212;" Padding="6,0"
+                          ToolTip.Tip="Unstage file"
+                          Command="{Binding $parent[UserControl].((vm:RepoTabViewModel)DataContext).UnstageFileCommand}"
+                          CommandParameter="{Binding}" />
+                  <TextBlock Text="{Binding Status}" Opacity="0.6" Width="64" DockPanel.Dock="Left" />
+                  <TextBlock Text="{Binding Path}" TextTrimming="CharacterEllipsis" />
+                </DockPanel>
+              </DataTemplate>
+            </ListBox.ItemTemplate>
+          </ListBox>
+
+          <StackPanel Grid.Row="4" Spacing="4">
+            <TextBox Text="{Binding CommitMessage}" AcceptsReturn="True" TextWrapping="Wrap" Height="80"
+                     Watermark="Commit message" />
+            <DockPanel>
+              <Button DockPanel.Dock="Right" Content="Commit" Command="{Binding CommitCommand}" />
+              <CheckBox Content="Amend last commit" IsChecked="{Binding Amend}" />
+            </DockPanel>
+            <TextBlock Text="{Binding WorkingTreeSummary}" Opacity="0.6" FontSize="11" />
+          </StackPanel>
+        </Grid>
+
+        <GridSplitter Grid.Column="1" Width="4" />
+
+        <!-- Diff -->
+        <Grid Grid.Column="2" RowDefinitions="Auto,*">
+          <DockPanel Grid.Row="0" Margin="6,4">
+            <ToggleButton DockPanel.Dock="Right" Content="Side by side" Margin="6,0,0,0"
+                          IsChecked="{Binding SideBySide, Mode=TwoWay}" />
+            <Button DockPanel.Dock="Right" Content="{Binding SelectionActionText}"
+                    Command="{Binding StageSelectedCommand}" IsVisible="{Binding DiffEditable}" />
+            <TextBlock Text="{Binding ActiveDiff.Path}" VerticalAlignment="Center" Opacity="0.8"
+                       TextTrimming="CharacterEllipsis" />
+          </DockPanel>
+          <ctl:DiffView Grid.Row="1"
+                        Diff="{Binding ActiveDiff}"
+                        SideBySide="{Binding SideBySide}"
+                        Editable="{Binding DiffEditable}"
+                        Staged="{Binding DiffStaged}"
+                        Selection="{Binding Selection}"
+                        HunkCommand="{Binding ApplyHunkCommand}" />
+        </Grid>
+      </Grid>
+    </Grid>
+  </Grid>
+</UserControl>

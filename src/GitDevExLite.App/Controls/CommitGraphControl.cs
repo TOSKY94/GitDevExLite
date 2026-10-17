@@ -4,6 +4,7 @@ using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Media;
 using Avalonia.VisualTree;
+using GitDevExLite.App.ViewModels;
 using GitDevExLite.Core.Graph;
 using GitDevExLite.Core.Models;
 
@@ -37,6 +38,15 @@ public sealed class CommitGraphControl : Control
         AvaloniaProperty.Register<CommitGraphControl, GraphRow?>(
             nameof(SelectedRow), defaultBindingMode: Avalonia.Data.BindingMode.TwoWay);
 
+    public static readonly StyledProperty<HashSet<string>?> MatchedShasProperty =
+        AvaloniaProperty.Register<CommitGraphControl, HashSet<string>?>(nameof(MatchedShas));
+
+    public static readonly StyledProperty<Func<GraphRow, IReadOnlyList<ContextAction>>?> MenuProviderProperty =
+        AvaloniaProperty.Register<CommitGraphControl, Func<GraphRow, IReadOnlyList<ContextAction>>?>(nameof(MenuProvider));
+
+    /// <summary>When non-null, rows whose SHA is not in the set are drawn dimmed.</summary>
+    public HashSet<string>? MatchedShas { get => GetValue(MatchedShasProperty); set => SetValue(MatchedShasProperty, value); }
+    public Func<GraphRow, IReadOnlyList<ContextAction>>? MenuProvider { get => GetValue(MenuProviderProperty); set => SetValue(MenuProviderProperty, value); }
     public GraphLayoutResult? Graph { get => GetValue(GraphProperty); set => SetValue(GraphProperty, value); }
     public Dictionary<string, List<RefInfo>>? RefsByCommit { get => GetValue(RefsByCommitProperty); set => SetValue(RefsByCommitProperty, value); }
     public GraphRow? SelectedRow { get => GetValue(SelectedRowProperty); set => SetValue(SelectedRowProperty, value); }
@@ -45,8 +55,30 @@ public sealed class CommitGraphControl : Control
 
     static CommitGraphControl()
     {
-        AffectsRender<CommitGraphControl>(GraphProperty, RefsByCommitProperty, SelectedRowProperty);
+        AffectsRender<CommitGraphControl>(GraphProperty, RefsByCommitProperty, SelectedRowProperty, MatchedShasProperty);
         AffectsMeasure<CommitGraphControl>(GraphProperty);
+    }
+
+    protected override void OnPropertyChanged(AvaloniaPropertyChangedEventArgs change)
+    {
+        base.OnPropertyChanged(change);
+        if (change.Property == SelectedRowProperty && change.NewValue is GraphRow row) EnsureVisible(row);
+    }
+
+    private void EnsureVisible(GraphRow row)
+    {
+        if (_scroll is null || Graph is null) return;
+        var index = Graph.Rows.ToList().IndexOf(row);
+        if (index < 0) return;
+
+        var top = index * RowHeight;
+        var bottom = top + RowHeight;
+        var viewTop = _scroll.Offset.Y;
+        var viewBottom = viewTop + _scroll.Viewport.Height;
+        if (top < viewTop)
+            _scroll.Offset = new Vector(_scroll.Offset.X, top);
+        else if (bottom > viewBottom)
+            _scroll.Offset = new Vector(_scroll.Offset.X, bottom - _scroll.Viewport.Height);
     }
 
     protected override void OnAttachedToVisualTree(VisualTreeAttachmentEventArgs e)
@@ -89,6 +121,13 @@ public sealed class CommitGraphControl : Control
             var row = rows[i];
             var y = i * RowHeight;
             var mid = y + RowHeight / 2;
+
+            var matches = MatchedShas;
+            var isMatch = matches?.Contains(row.Commit.Sha) == true;
+            using var dim = ctx.PushOpacity(matches is not null && !isMatch ? 0.3 : 1.0);
+
+            if (isMatch)
+                ctx.DrawRectangle(new SolidColorBrush(Color.Parse("#22FFD54F")), null, new Rect(0, y, width, RowHeight));
 
             if (ReferenceEquals(row, SelectedRow))
                 ctx.DrawRectangle(new SolidColorBrush(Color.Parse("#334FC3F7")), null, new Rect(0, y, width, RowHeight));
@@ -168,6 +207,21 @@ public sealed class CommitGraphControl : Control
         base.OnPointerPressed(e);
         if (Graph is null) return;
         var index = (int)(e.GetPosition(this).Y / RowHeight);
-        if (index >= 0 && index < Graph.Rows.Count) SelectedRow = Graph.Rows[index];
+        if (index < 0 || index >= Graph.Rows.Count) return;
+
+        var row = Graph.Rows[index];
+        SelectedRow = row;
+
+        if (e.GetCurrentPoint(this).Properties.IsRightButtonPressed && MenuProvider is { } provider)
+        {
+            var items = provider(row).Select(a =>
+            {
+                var item = new MenuItem { Header = a.Header };
+                item.Click += async (_, _) => await a.Execute();
+                return item;
+            }).ToList();
+            new ContextMenu { ItemsSource = items }.Open(this);
+            e.Handled = true;
+        }
     }
 }

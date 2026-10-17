@@ -11,6 +11,9 @@
     <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2" />
   </ItemGroup>
   <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
+  <ItemGroup>
     <ProjectReference Include="..\..\GitDevExLite.Core\GitDevExLite.Core.csproj" />
   </ItemGroup>
 </Project>
