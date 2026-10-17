@@ -9,14 +9,18 @@ namespace GitDevExLite.App.ViewModels;
 public partial class MainViewModel : ObservableObject
 {
     private readonly Func<IGitService> _gitFactory;
+    private readonly IPullRequestService _pullRequests;
+    private readonly ISecretScanner _secretScanner;
     private readonly IDialogService _dialogs;
     private readonly RepoSettingsStore _store;
     private readonly RepoSettings _settings;
     private readonly DispatcherTimer _autoFetchTimer;
 
-    public MainViewModel(Func<IGitService> gitFactory, IDialogService dialogs, RepoSettingsStore store)
+    public MainViewModel(Func<IGitService> gitFactory, IPullRequestService pullRequests, ISecretScanner secretScanner, IDialogService dialogs, RepoSettingsStore store)
     {
         _gitFactory = gitFactory;
+        _pullRequests = pullRequests;
+        _secretScanner = secretScanner;
         _dialogs = dialogs;
         _store = store;
         _settings = store.Load();
@@ -62,7 +66,7 @@ public partial class MainViewModel : ObservableObject
                 return;
             }
 
-            var tab = new RepoTabViewModel(_gitFactory(), _dialogs, Options);
+            var tab = new RepoTabViewModel(_gitFactory(), _pullRequests, _secretScanner, _dialogs, Options);
             tab.OpenRepositoryRequested += OpenRepository;
             tab.Open(path);
             var resolved = tab.RepositoryPath!;

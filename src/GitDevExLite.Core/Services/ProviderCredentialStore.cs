@@ -1,0 +1,23 @@
+namespace GitDevExLite.Core.Services;
+
+public static class ProviderCredentialStore
+{
+    public static Func<string, string, CancellationToken, Task<string?>> TokenResolver { get; set; } = TryGetTokenCoreAsync;
+
+    public static async Task<string?> TryGetTokenAsync(string protocol, string host, CancellationToken ct)
+        => await TokenResolver(protocol, host, ct);
+
+    private static async Task<string?> TryGetTokenCoreAsync(string protocol, string host, CancellationToken ct)
+    {
+        var input = $"protocol={protocol}\nhost={host}\n\n";
+        var output = await GitProcess.RunAsync(null, new[] { "credential", "fill" }, null, ct, null, input);
+        var lines = output.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries);
+        foreach (var line in lines)
+        {
+            if (line.StartsWith("password=", StringComparison.Ordinal))
+                return line["password=".Length..];
+        }
+
+        return null;
+    }
+}
