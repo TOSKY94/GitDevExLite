@@ -140,11 +140,10 @@
 
       <!-- Details / working directory + diff -->
       <Grid Grid.Row="3" ColumnDefinitions="320,Auto,*">
-        <!-- Commit mode -->
+        <!-- Pull request detail mode -->
         <Grid Grid.Column="0" RowDefinitions="Auto,*" Margin="8"
-              IsVisible="{Binding !ShowWorkingDirectory}">
-          <StackPanel Grid.Row="0" Spacing="6"
-                      IsVisible="{Binding HasPullRequestDetail}">
+              IsVisible="{Binding HasPullRequestDetail}">
+          <StackPanel Grid.Row="0" Spacing="6">
             <TextBlock Text="{Binding PullRequestDetailTitle}" FontWeight="SemiBold" TextWrapping="Wrap" />
             <WrapPanel Orientation="Horizontal">
               <Button Content="Checkout" Command="{Binding CheckoutPullRequestCommand}" Margin="0,0,6,6" />
@@ -201,6 +200,21 @@
             </ItemsControl>
             <TextBlock Text="Changed files" FontWeight="SemiBold" Margin="0,8,0,0" />
           </StackPanel>
+          <ListBox Grid.Row="1" ItemsSource="{Binding CommitFiles}" SelectedItem="{Binding SelectedCommitFile}">
+            <ListBox.ItemTemplate>
+              <DataTemplate x:DataType="m:ChangedFile">
+                <StackPanel Orientation="Horizontal" Spacing="6">
+                  <TextBlock Text="{Binding Status}" Opacity="0.6" Width="60" />
+                  <TextBlock Text="{Binding Path}" />
+                </StackPanel>
+              </DataTemplate>
+            </ListBox.ItemTemplate>
+          </ListBox>
+        </Grid>
+
+        <!-- Commit mode -->
+        <Grid Grid.Column="0" RowDefinitions="Auto,*" Margin="8"
+              IsVisible="{Binding !ShowWorkingDirectory}">
           <StackPanel Grid.Row="0" Spacing="4"
                       IsVisible="{Binding SelectedRow, Converter={x:Static ObjectConverters.IsNotNull}}">
             <TextBlock Text="{Binding SelectedRow.Commit.Summary}" FontWeight="SemiBold" TextWrapping="Wrap" />

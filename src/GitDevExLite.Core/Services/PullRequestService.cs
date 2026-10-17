@@ -711,7 +711,7 @@ public sealed class PullRequestService : IPullRequestService
         object? body = null,
         bool acceptNotFound = false)
     {
-        var token = await _tokenProvider("https", repository.Host, ct);
+        var token = await ProviderCredentialStore.TryGetTokenAsync("https", repository.Host, session.Account.UserName, ct);
         if (string.IsNullOrWhiteSpace(token))
             throw new InvalidOperationException("No GitHub credential was found for this host. Sign in again.");
 
