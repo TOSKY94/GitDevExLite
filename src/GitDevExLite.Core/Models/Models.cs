@@ -2,7 +2,22 @@ namespace GitDevExLite.Core.Models;
 
 public enum RefKind { LocalBranch, RemoteBranch, Tag }
 
-public sealed record RefInfo(string Name, RefKind Kind, string TargetSha, bool IsHead);
+public sealed record RefInfo(
+    string Name,
+    RefKind Kind,
+    string TargetSha,
+    bool IsHead,
+    int? Ahead = null,
+    int? Behind = null,
+    string? Upstream = null)
+{
+    /// <summary>Empty when the branch has no upstream or is in sync.</summary>
+    public string AheadBehindText => (Ahead, Behind) switch
+    {
+        (null, null) or (0, 0) or (null, 0) or (0, null) => "",
+        (var a, var b) => $"{(a > 0 ? $"\u2191{a}" : "")}{(a > 0 && b > 0 ? " " : "")}{(b > 0 ? $"\u2193{b}" : "")}"
+    };
+}
 
 public sealed record StashInfo(int Index, string Message, string Sha);
 

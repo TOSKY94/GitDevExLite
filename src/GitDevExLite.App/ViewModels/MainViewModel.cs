@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using GitDevExLite.Core.Services;
@@ -11,6 +12,7 @@ public partial class MainViewModel : ObservableObject
     private readonly IDialogService _dialogs;
     private readonly RepoSettingsStore _store;
     private readonly RepoSettings _settings;
+    private readonly DispatcherTimer _autoFetchTimer;
 
     public MainViewModel(Func<IGitService> gitFactory, IDialogService dialogs, RepoSettingsStore store)
     {
@@ -19,7 +21,21 @@ public partial class MainViewModel : ObservableObject
         _store = store;
         _settings = store.Load();
         foreach (var r in _settings.RecentRepos) RecentRepos.Add(r);
+
+        Options.AutoFetch = _settings.AutoFetch;
+        Options.PruneOnFetch = _settings.PruneOnFetch;
+        Options.AutoFetchMinutes = Math.Max(1, _settings.AutoFetchMinutes);
+        Options.PropertyChanged += (_, _) => SaveTabs();
+
+        _autoFetchTimer = new DispatcherTimer { Interval = TimeSpan.FromMinutes(Options.AutoFetchMinutes) };
+        _autoFetchTimer.Tick += async (_, _) =>
+        {
+            if (Options.AutoFetch && SelectedTab is { } tab) await tab.AutoFetchAsync();
+        };
+        _autoFetchTimer.Start();
     }
+
+    public RemoteOptions Options { get; } = new();
 
     public ObservableCollection<RepoTabViewModel> Tabs { get; } = new();
     public ObservableCollection<string> RecentRepos { get; } = new();
@@ -46,7 +62,7 @@ public partial class MainViewModel : ObservableObject
                 return;
             }
 
-            var tab = new RepoTabViewModel(_gitFactory(), _dialogs);
+            var tab = new RepoTabViewModel(_gitFactory(), _dialogs, Options);
             tab.Open(path);
             var resolved = tab.RepositoryPath!;
 
@@ -100,10 +116,23 @@ public partial class MainViewModel : ObservableObject
     [RelayCommand]
     private void CheckoutSelected() => SelectedTab?.CheckoutCommand.Execute(null);
 
+    [RelayCommand]
+    private async Task Clone()
+    {
+        var parent = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        var path = await _dialogs.ShowCloneDialogAsync(RunCloneAsync, parent);
+        if (path is not null) OpenRepository(path);
+    }
+
+    private Task RunCloneAsync(string url, string destination, IProgress<GitProgress> progress, CancellationToken ct) =>
+        AuthRetry.RunAsync(_dialogs, () => url, () => GitClone.CloneAsync(url, destination, progress, ct), ct);
+
     private void SaveTabs()
     {
         _settings.OpenTabs = Tabs.Select(t => t.RepositoryPath).OfType<string>().ToList();
         _settings.ActiveTab = SelectedTab?.RepositoryPath;
+        _settings.AutoFetch = Options.AutoFetch;
+        _settings.PruneOnFetch = Options.PruneOnFetch;
         _store.Save(_settings);
     }
 

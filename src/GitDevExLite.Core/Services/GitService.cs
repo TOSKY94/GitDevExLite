@@ -10,6 +10,8 @@ public sealed class GitService : IGitService
 
     public string? RepositoryPath => _repo?.Info.WorkingDirectory;
 
+    public string? GitDirectory => _repo?.Info.Path;
+
     private Repository Repo => _repo ?? throw new InvalidOperationException("No repository is open.");
 
     public void Open(string path)
@@ -26,9 +28,12 @@ public sealed class GitService : IGitService
         foreach (var b in Repo.Branches)
         {
             if (b.Tip is null) continue;
+            var tracking = !b.IsRemote && b.IsTracking ? b.TrackingDetails : null;
             result.Add(new RefInfo(b.FriendlyName,
                 b.IsRemote ? RefKind.RemoteBranch : RefKind.LocalBranch,
-                b.Tip.Sha, b.IsCurrentRepositoryHead));
+                b.Tip.Sha, b.IsCurrentRepositoryHead,
+                tracking?.AheadBy, tracking?.BehindBy,
+                tracking is null ? null : b.TrackedBranch?.FriendlyName));
         }
         foreach (var t in Repo.Tags)
         {
@@ -191,9 +196,130 @@ public sealed class GitService : IGitService
             ?? throw new InvalidOperationException("Nothing selected.");
         GitCli.ApplyToIndex(Repo.Info.WorkingDirectory, patch, reverse);
         // libgit2 caches the index in memory, so reopen to see the CLI's write.
+        Reopen();
+    }
+
+    private void Reopen()
+    {
         var gitDir = Repo.Info.Path;
         _repo!.Dispose();
         _repo = new Repository(gitDir);
+    }
+
+    public IReadOnlyList<string> GetRemoteNames() => Repo.Network.Remotes.Select(r => r.Name).ToList();
+
+    public string? GetRemoteUrl(string? remote = null)
+    {
+        remote ??= DefaultRemote();
+        return remote is null ? null : Repo.Network.Remotes[remote]?.Url;
+    }
+
+    private string? DefaultRemote()
+    {
+        var names = GetRemoteNames();
+        if (names.Count == 0) return null;
+        var head = Repo.Head;
+        if (head.IsTracking && head.RemoteName is { Length: > 0 } r && names.Contains(r)) return r;
+        return names.Contains("origin") ? "origin" : names[0];
+    }
+
+    private static Dictionary<string, string> Env(bool background) =>
+        // Background work must never pop up a sign-in window.
+        background ? new() { ["GCM_INTERACTIVE"] = "never" } : new();
+
+    private static void RequireSafeName(string name)
+    {
+        if (string.IsNullOrWhiteSpace(name) || name.StartsWith('-') || name.Any(char.IsWhiteSpace))
+            throw new ArgumentException($"'{name}' is not a valid name.");
+    }
+
+    private async Task RunRemoteAsync(IEnumerable<string> args, IProgress<GitProgress>? progress, CancellationToken ct, bool background = false)
+    {
+        var dir = Repo.Info.WorkingDirectory;
+        try
+        {
+            await GitProcess.RunAsync(dir, args, progress, ct, Env(background));
+        }
+        finally
+        {
+            // Refs and the index were changed by another process.
+            if (_repo is not null) Reopen();
+        }
+    }
+
+    public Task FetchAsync(bool prune, IProgress<GitProgress>? progress, CancellationToken ct, bool background = false)
+    {
+        if (GetRemoteNames().Count == 0) throw new InvalidOperationException("This repository has no remotes.");
+        var args = new List<string> { "fetch", "--all", "--progress" };
+        if (prune) args.Add("--prune");
+        return RunRemoteAsync(args, progress, ct, background);
+    }
+
+    public Task PullAsync(PullMode mode, IProgress<GitProgress>? progress, CancellationToken ct)
+    {
+        if (Repo.Info.IsHeadDetached) throw new InvalidOperationException("HEAD is detached; check out a branch first.");
+        if (!Repo.Head.IsTracking)
+            throw new InvalidOperationException("This branch has no upstream. Push it or set an upstream first.");
+
+        var args = new List<string> { "pull", "--progress" };
+        args.AddRange(mode switch
+        {
+            PullMode.Rebase => new[] { "--rebase" },
+            PullMode.FastForwardOnly => new[] { "--ff-only" },
+            _ => new[] { "--no-rebase", "--no-edit" }
+        });
+        return RunRemoteAsync(args, progress, ct);
+    }
+
+    public Task PushAsync(IProgress<GitProgress>? progress, CancellationToken ct)
+    {
+        if (Repo.Info.IsHeadDetached) throw new InvalidOperationException("HEAD is detached; check out a branch first.");
+        var head = Repo.Head;
+        var args = new List<string> { "push", "--progress" };
+        if (!head.IsTracking)
+        {
+            var remote = DefaultRemote() ?? throw new InvalidOperationException("This repository has no remotes.");
+            RequireSafeName(head.FriendlyName);
+            args.AddRange(new[] { "--set-upstream", remote, head.FriendlyName });
+        }
+        return RunRemoteAsync(args, progress, ct);
+    }
+
+    public void SetUpstream(string branch, string upstream)
+    {
+        var local = Repo.Branches[branch] ?? throw new ArgumentException($"Branch '{branch}' not found.");
+        var remote = Repo.Branches[upstream] ?? throw new ArgumentException($"Remote branch '{upstream}' not found.");
+        if (!remote.IsRemote) throw new ArgumentException($"'{upstream}' is not a remote branch.");
+        Repo.Branches.Update(local, b => b.TrackedBranch = remote.CanonicalName);
+    }
+
+    public void CreateTag(string name, string sha, string? message)
+    {
+        RequireSafeName(name);
+        if (string.IsNullOrWhiteSpace(message))
+        {
+            Repo.ApplyTag(name, sha);
+            return;
+        }
+        var sig = Repo.Config.BuildSignature(DateTimeOffset.Now)
+            ?? throw new InvalidOperationException("Set user.name and user.email in your git config.");
+        Repo.ApplyTag(name, sha, sig, message.Trim());
+    }
+
+    public void DeleteTag(string name) => Repo.Tags.Remove(name);
+
+    public Task PushTagAsync(string name, IProgress<GitProgress>? progress, CancellationToken ct)
+    {
+        RequireSafeName(name);
+        var remote = DefaultRemote() ?? throw new InvalidOperationException("This repository has no remotes.");
+        return RunRemoteAsync(new[] { "push", "--progress", remote, $"refs/tags/{name}" }, progress, ct);
+    }
+
+    public Task DeleteRemoteTagAsync(string name, IProgress<GitProgress>? progress, CancellationToken ct)
+    {
+        RequireSafeName(name);
+        var remote = DefaultRemote() ?? throw new InvalidOperationException("This repository has no remotes.");
+        return RunRemoteAsync(new[] { "push", "--progress", remote, "--delete", $"refs/tags/{name}" }, progress, ct);
     }
 
     public void Dispose() => _repo?.Dispose();

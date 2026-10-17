@@ -140,7 +140,7 @@ public sealed class GitServiceTests : IDisposable
 
         var after = _git.GetWorkingDiff("a.txt", staged: true);
         Assert.Equal("edited", Assert.Single(after.Hunks).Lines.Single(l => l.Kind == DiffLineKind.Added).Text);
-        Assert.Equal(1, _git.GetWorkingDiff("a.txt", staged: false).Hunks.Count);
+        Assert.Single(_git.GetWorkingDiff("a.txt", staged: false).Hunks);
     }
 
     [Fact]
