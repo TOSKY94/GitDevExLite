@@ -8,12 +8,26 @@
   <Grid ColumnDefinitions="220,Auto,*">
     <ScrollViewer Grid.Column="0">
       <StackPanel Margin="8" Spacing="4">
+        <Border Background="#1E3A2A" BorderBrush="#4CAF50" BorderThickness="1" CornerRadius="6" Padding="10,8"
+                ToolTip.Tip="Currently checked-out branch">
+          <StackPanel Spacing="2">
+            <TextBlock Text="CHECKED OUT" FontSize="10" Opacity="0.7" />
+            <StackPanel Orientation="Horizontal" Spacing="6">
+              <TextBlock Text="&#x2387;" Foreground="#81C784" FontSize="16" VerticalAlignment="Center" />
+              <TextBlock Text="{Binding CurrentBranchLabel}" FontWeight="Bold" FontSize="14"
+                         Foreground="#A5D6A7" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
+              <TextBlock Text="{Binding CurrentBranchSync}" Opacity="0.8" VerticalAlignment="Center" />
+            </StackPanel>
+          </StackPanel>
+        </Border>
         <Expander Header="Local" IsExpanded="True" HorizontalAlignment="Stretch">
           <ListBox ItemsSource="{Binding LocalBranches}" SelectedItem="{Binding SelectedBranch}">
             <ListBox.ItemTemplate>
               <DataTemplate x:DataType="m:RefInfo">
                 <StackPanel Orientation="Horizontal" Spacing="6">
-                  <TextBlock Text="{Binding Name}" />
+                  <TextBlock Text="&#x2714;" Foreground="#81C784" IsVisible="{Binding IsHead}" />
+                  <TextBlock Text="{Binding Name}" FontWeight="Bold" Foreground="#A5D6A7" IsVisible="{Binding IsHead}" />
+                  <TextBlock Text="{Binding Name}" IsVisible="{Binding !IsHead}" Margin="18,0,0,0" />
                   <TextBlock Text="{Binding AheadBehindText}" Opacity="0.7" ToolTip.Tip="{Binding Upstream}" />
                 </StackPanel>
               </DataTemplate>
@@ -61,7 +75,7 @@
             </ListBox.ItemTemplate>
           </ListBox>
         </Expander>
-        <Expander Header="Pull requests" HorizontalAlignment="Stretch">
+        <Expander Header="Pull requests" IsExpanded="True" HorizontalAlignment="Stretch">
           <StackPanel Spacing="6">
             <TextBlock Text="{Binding ProviderSummary}" TextWrapping="Wrap" Opacity="0.8" />
             <StackPanel Orientation="Horizontal" Spacing="6">
@@ -88,11 +102,31 @@
             <ListBox ItemsSource="{Binding PullRequests}" SelectedItem="{Binding SelectedPullRequest}">
               <ListBox.ItemTemplate>
                 <DataTemplate x:DataType="m:PullRequestListItem">
-                  <StackPanel Spacing="2">
-                    <TextBlock Text="{Binding Title}" TextWrapping="Wrap" />
-                    <TextBlock Opacity="0.65" Text="{Binding Number, StringFormat='PR #{0}'}" />
-                    <TextBlock Opacity="0.65" Text="{Binding SourceBranch, StringFormat='From {0}'}" />
-                  </StackPanel>
+                  <Border Background="#22FFFFFF" CornerRadius="6" Padding="8,6" Margin="0,2">
+                    <StackPanel Spacing="4">
+                      <TextBlock Text="{Binding Title}" TextWrapping="Wrap" FontWeight="SemiBold" />
+                      <StackPanel Orientation="Horizontal" Spacing="6">
+                        <Border Background="#2E7D32" CornerRadius="8" Padding="6,1">
+                          <TextBlock Text="{Binding Status}" FontSize="10" Foreground="White" />
+                        </Border>
+                        <Border Background="#616161" CornerRadius="8" Padding="6,1" IsVisible="{Binding IsDraft}">
+                          <TextBlock Text="Draft" FontSize="10" Foreground="White" />
+                        </Border>
+                        <TextBlock Opacity="0.65" FontSize="11" VerticalAlignment="Center">
+                          <Run Text="#" /><Run Text="{Binding Number}" /><Run Text="  by " /><Run Text="{Binding Author}" />
+                        </TextBlock>
+                      </StackPanel>
+                      <WrapPanel>
+                        <Border Background="#2E7D32" CornerRadius="4" Padding="5,1" Margin="0,0,4,0">
+                          <TextBlock Text="{Binding SourceBranch}" FontSize="10" Foreground="White" TextTrimming="CharacterEllipsis" MaxWidth="110" />
+                        </Border>
+                        <TextBlock Text="&#x2192;" Opacity="0.6" Margin="0,0,4,0" />
+                        <Border Background="#1565C0" CornerRadius="4" Padding="5,1">
+                          <TextBlock Text="{Binding TargetBranch}" FontSize="10" Foreground="White" TextTrimming="CharacterEllipsis" MaxWidth="80" />
+                        </Border>
+                      </WrapPanel>
+                    </StackPanel>
+                  </Border>
                 </DataTemplate>
               </ListBox.ItemTemplate>
             </ListBox>
@@ -144,13 +178,13 @@
         <Grid Grid.Column="0" RowDefinitions="Auto,*" Margin="8"
               IsVisible="{Binding HasPullRequestDetail}">
           <StackPanel Grid.Row="0" Spacing="6">
-            <TextBlock Text="{Binding PullRequestDetailTitle}" FontWeight="SemiBold" TextWrapping="Wrap" />
+            <TextBlock Text="{Binding PullRequestDetailTitle}" FontWeight="Bold" FontSize="15" TextWrapping="Wrap" />
             <WrapPanel Orientation="Horizontal">
               <Button Content="Checkout" Command="{Binding CheckoutPullRequestCommand}" Margin="0,0,6,6" />
-              <Button Content="Approve" Command="{Binding ApprovePullRequestCommand}" Margin="0,0,6,6" />
-              <Button Content="Request changes" Command="{Binding RequestPullRequestChangesCommand}" Margin="0,0,6,6" />
+              <Button Content="&#x2714; Approve" Command="{Binding ApprovePullRequestCommand}" Background="#2E7D32" Margin="0,0,6,6" />
+              <Button Content="Request changes" Command="{Binding RequestPullRequestChangesCommand}" Background="#E65100" Margin="0,0,6,6" />
               <Button Content="Comment" Command="{Binding CommentOnPullRequestCommand}" Margin="0,0,6,6" />
-              <Button Content="Merge" Command="{Binding MergePullRequestCommand}" Margin="0,0,6,6" />
+              <Button Content="Merge" Command="{Binding MergePullRequestCommand}" Background="#6A1B9A" Margin="0,0,6,6" />
             </WrapPanel>
             <TextBlock Text="{Binding PullRequestDetail.Description}" TextWrapping="Wrap" Opacity="0.85" />
             <TextBlock Text="{Binding PullRequestDetailSummary}" Opacity="0.7" TextWrapping="Wrap" />

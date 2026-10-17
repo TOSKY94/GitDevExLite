@@ -417,6 +417,8 @@ public partial class RepoTabViewModel : ObservableObject, IDisposable
         Replace(LocalBranches, refs.Where(r => r.Kind == RefKind.LocalBranch).OrderBy(r => r.Name));
         Replace(RemoteBranches, refs.Where(r => r.Kind == RefKind.RemoteBranch).OrderBy(r => r.Name));
         Replace(Tags, refs.Where(r => r.Kind == RefKind.Tag).OrderByDescending(r => r.Name));
+        OnPropertyChanged(nameof(CurrentBranchLabel));
+        OnPropertyChanged(nameof(CurrentBranchSync));
         Replace(Stashes, _git.GetStashes());
         RefsByCommit = refs.GroupBy(r => r.TargetSha).ToDictionary(g => g.Key, g => g.ToList());
         RefreshPullRequestContext();
@@ -1063,6 +1065,9 @@ public partial class RepoTabViewModel : ObservableObject, IDisposable
     // ---- merge, rebase, cherry-pick, revert, reset ---------------------------
 
     private string CurrentBranchName => LocalBranches.FirstOrDefault(b => b.IsHead)?.Name ?? "HEAD";
+
+    public string CurrentBranchLabel => LocalBranches.FirstOrDefault(b => b.IsHead)?.Name ?? "HEAD (detached)";
+    public string CurrentBranchSync => LocalBranches.FirstOrDefault(b => b.IsHead)?.AheadBehindText ?? "";
 
     private void AddHistoryActions(List<ContextAction> actions, string sha, List<RefInfo>? refs)
     {
