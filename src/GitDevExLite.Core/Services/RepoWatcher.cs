@@ -66,7 +66,10 @@ public sealed class RepoWatcher : IDisposable
             var rel = Path.GetRelativePath(_gitDir, fullPath).Replace('\\', '/');
             if (rel == "index") return RepoChange.WorkingTree;
             if (rel is "HEAD" or "packed-refs" or "MERGE_HEAD" or "CHERRY_PICK_HEAD" or "REVERT_HEAD"
-                || rel.StartsWith("refs/", StringComparison.Ordinal))
+                || rel.StartsWith("refs/", StringComparison.Ordinal)
+                || rel.StartsWith("rebase-merge", StringComparison.Ordinal)
+                || rel.StartsWith("rebase-apply", StringComparison.Ordinal)
+                || rel.StartsWith("sequencer", StringComparison.Ordinal))
                 return RepoChange.RepoState;
             return RepoChange.None;
         }

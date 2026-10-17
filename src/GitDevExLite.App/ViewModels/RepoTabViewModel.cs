@@ -68,6 +68,18 @@ public partial class RepoTabViewModel : ObservableObject, IDisposable
     [ObservableProperty] private bool _diffStaged;
     [ObservableProperty] private bool _diffEditable;
     [ObservableProperty] private bool _sideBySide;
+    [ObservableProperty] private ConflictViewModel? _activeConflict;
+    [ObservableProperty] private StashInfo? _selectedStash;
+    [ObservableProperty] private string _detailHeading = "";
+    private string? _detailSha;
+
+    public event Action<string>? OpenRepositoryRequested;
+
+    /// <summary>The file shown in the detail pane, for history and blame.</summary>
+    public string? CurrentFilePath => ActiveConflict?.Path ?? ActiveDiff?.Path
+        ?? (ShowWorkingDirectory ? (SelectedUnstaged ?? SelectedStaged)?.Path : SelectedCommitFile?.Path);
+
+    public bool HasCurrentFile => CurrentFilePath is not null;
 
     [ObservableProperty] private RefInfo? _selectedTag;
     [ObservableProperty] private string _operationText = "";
@@ -75,8 +87,17 @@ public partial class RepoTabViewModel : ObservableObject, IDisposable
     [ObservableProperty] private bool _progressIndeterminate = true;
 
     [ObservableProperty, NotifyCanExecuteChangedFor(nameof(FetchCommand), nameof(PullMergeCommand),
-         nameof(PullRebaseCommand), nameof(PullFastForwardCommand), nameof(PushCommand))]
+         nameof(PullRebaseCommand), nameof(PullFastForwardCommand), nameof(PushCommand),
+         nameof(ContinueOperationCommand), nameof(SkipOperationCommand), nameof(AbortOperationCommand))]
     private bool _isBusy;
+
+    [ObservableProperty, NotifyPropertyChangedFor(nameof(HasOperation), nameof(OperationBanner), nameof(CanSkipOperation))]
+    private RepoOperationState _operationState = RepoOperationState.None;
+
+    public bool HasOperation => OperationState.InProgress;
+    public bool CanSkipOperation => OperationState.CanSkip;
+    public string OperationBanner =>
+        $"{OperationState.Describe()}. Resolve any conflicts, stage the files, then Continue \u2014 or Abort.";
 
     /// <summary>Set after a background fetch hit an auth failure; cleared by the next successful manual operation.</summary>
     public bool AutoFetchPaused { get; private set; }
@@ -143,6 +164,7 @@ public partial class RepoTabViewModel : ObservableObject, IDisposable
         SelectedRow = keepSha is null ? null : Graph.Rows.FirstOrDefault(r => r.Commit.Sha == keepSha);
         ApplySearch();
         if (includeStatus) RefreshStatus();
+        OperationState = _git.GetOperationState();
 
         Header = new DirectoryInfo(RepositoryPath!).Name;
         if (!quiet) StatusText = $"{_commits.Count} commits, {Graph.LaneCount} lanes";
@@ -186,12 +208,31 @@ public partial class RepoTabViewModel : ObservableObject, IDisposable
     partial void OnSelectedRowChanged(GraphRow? value)
     {
         CommitFiles.Clear();
+        DetailHeading = "";
+        _detailSha = value?.Commit.Sha;
         if (value is null) { SelectedCommitFile = null; return; }
 
+        SelectedStash = null;
         ShowWorkingDirectory = false;
+        LoadDetailFiles(value.Commit.Sha);
+    }
+
+    partial void OnSelectedStashChanged(StashInfo? value)
+    {
+        if (value is null) return;
+        SelectedRow = null;
+        ShowWorkingDirectory = false;
+        _detailSha = value.Sha;
+        DetailHeading = $"Stash: {value.Message}";
+        LoadDetailFiles(value.Sha);
+    }
+
+    // A stash is stored as a commit, so its files and diffs reuse the commit machinery.
+    private void LoadDetailFiles(string sha)
+    {
         try
         {
-            Replace(CommitFiles, _git.GetCommitChanges(value.Commit.Sha));
+            Replace(CommitFiles, _git.GetCommitChanges(sha));
             SelectedCommitFile = CommitFiles.FirstOrDefault();
         }
         catch (Exception ex)
@@ -202,11 +243,12 @@ public partial class RepoTabViewModel : ObservableObject, IDisposable
 
     partial void OnSelectedCommitFileChanged(ChangedFile? value)
     {
+        OnPropertyChanged(nameof(HasCurrentFile));
         if (ShowWorkingDirectory) return;
-        if (value is null || SelectedRow is null) { ActiveDiff = null; return; }
+        if (value is null || _detailSha is null) { ActiveDiff = null; return; }
         try
         {
-            ActiveDiff = _git.GetCommitDiff(SelectedRow.Commit.Sha, value.Path);
+            ActiveDiff = _git.GetCommitDiff(_detailSha, value.Path);
             DiffEditable = false;
             DiffStaged = false;
         }
@@ -221,6 +263,7 @@ public partial class RepoTabViewModel : ObservableObject, IDisposable
     partial void OnShowWorkingDirectoryChanged(bool value)
     {
         ActiveDiff = null;
+        ActiveConflict = null;
         if (value)
         {
             RefreshStatus();
@@ -255,10 +298,26 @@ public partial class RepoTabViewModel : ObservableObject, IDisposable
         LoadWorkingDiff(value);
     }
 
-    partial void OnActiveDiffChanged(FileDiff? value) => Selection.Clear();
+    partial void OnActiveDiffChanged(FileDiff? value)
+    {
+        Selection.Clear();
+        OnPropertyChanged(nameof(HasCurrentFile));
+    }
+
+    partial void OnActiveConflictChanged(ConflictViewModel? value) => OnPropertyChanged(nameof(HasCurrentFile));
 
     private void LoadWorkingDiff(FileChange file)
     {
+        if (file is { Status: "Conflicted", IsStaged: false })
+        {
+            ActiveDiff = null;
+            DiffEditable = false;
+            // Keep a half-resolved result when a refresh re-selects the same file.
+            if (ActiveConflict?.Path != file.Path) _ = LoadConflictAsync(file);
+            return;
+        }
+
+        ActiveConflict = null;
         try
         {
             ActiveDiff = _git.GetWorkingDiff(file.Path, file.IsStaged);
@@ -312,7 +371,11 @@ public partial class RepoTabViewModel : ObservableObject, IDisposable
         _suppressFileSelection = false;
 
         if (target is not null && ShowWorkingDirectory) LoadWorkingDiff(target);
-        else if (ShowWorkingDirectory) ActiveDiff = null;
+        else if (ShowWorkingDirectory)
+        {
+            ActiveDiff = null;
+            ActiveConflict = null;
+        }
 
         CommitCommand.NotifyCanExecuteChanged();
     }
@@ -326,6 +389,7 @@ public partial class RepoTabViewModel : ObservableObject, IDisposable
     private void ReloadDiffIfChanged()
     {
         if (!ShowWorkingDirectory || (SelectedUnstaged ?? SelectedStaged) is not { } file) return;
+        if (file is { Status: "Conflicted" }) return;
         try
         {
             var diff = _git.GetWorkingDiff(file.Path, file.IsStaged);
@@ -450,6 +514,8 @@ public partial class RepoTabViewModel : ObservableObject, IDisposable
 
         actions.Add(new("Create tag here...", () => CreateTagAsync(sha)));
 
+        if (!OperationState.InProgress) AddHistoryActions(actions, sha, refs);
+
         if (refs is not null)
         {
             foreach (var t in refs.Where(r => r.Kind == RefKind.Tag).OrderBy(r => r.Name))
@@ -463,6 +529,305 @@ public partial class RepoTabViewModel : ObservableObject, IDisposable
 
         actions.Add(new("Copy SHA", () => _dialogs.CopyTextAsync(sha)));
         return actions;
+    }
+
+    // ---- merge, rebase, cherry-pick, revert, reset ---------------------------
+
+    private string CurrentBranchName => LocalBranches.FirstOrDefault(b => b.IsHead)?.Name ?? "HEAD";
+
+    private void AddHistoryActions(List<ContextAction> actions, string sha, List<RefInfo>? refs)
+    {
+        var current = CurrentBranchName;
+        var headSha = LocalBranches.FirstOrDefault(b => b.IsHead)?.TargetSha;
+        var isHead = sha == headSha;
+
+        foreach (var b in (refs ?? new()).Where(r => r.Kind != RefKind.Tag && !r.IsHead).OrderBy(r => r.Name))
+        {
+            var target = b.Name;
+            actions.Add(new($"Merge '{target}' into '{current}'...", () => MergeAsync(target, MergeMode.Default)));
+            actions.Add(new($"Merge '{target}' into '{current}' (squash)...", () => MergeAsync(target, MergeMode.Squash)));
+        }
+
+        if (!isHead)
+        {
+            actions.Add(new($"Rebase '{current}' onto this commit...", () => RebaseOntoAsync(sha)));
+            actions.Add(new("Interactive rebase of the commits after this one...", () => InteractiveRebaseFromAsync(sha)));
+            actions.Add(new("Cherry-pick this commit", () => RunOperationAsync(
+                "Cherry-pick", (p, ct) => _git.CherryPickAsync(new[] { sha }, p, ct))));
+        }
+
+        actions.Add(new("Revert this commit...", () => RevertAsync(sha)));
+        foreach (var mode in new[] { ResetMode.Soft, ResetMode.Mixed, ResetMode.Hard })
+        {
+            var m = mode;
+            actions.Add(new($"Reset '{current}' to here ({m.ToString().ToLowerInvariant()})...", () => ResetAsync(sha, m)));
+        }
+    }
+
+    // ---- stash, undo, history, tools ------------------------------------------
+
+    [RelayCommand]
+    private async Task Stash()
+    {
+        var message = await _dialogs.PromptAsync("Stash changes", "Message (optional):");
+        if (message is null) return;
+        var untracked = await _dialogs.ConfirmAsync("Stash changes", "Also stash untracked files?");
+        await RunRemoteAsync("Stash", async (_, ct) => await _git.CreateStashAsync(message, untracked, ct), includeStatus: true);
+    }
+
+    private async Task ApplyStashAsync(StashInfo stash, bool drop)
+    {
+        GitOpResult? result = null;
+        await RunRemoteAsync(drop ? "Pop stash" : "Apply stash",
+            async (_, ct) => result = await _git.ApplyStashAsync(stash.Sha, drop, ct), includeStatus: true);
+        if (result is { Success: false })
+        {
+            ShowWorkingDirectory = true;
+            StatusText = "The stash conflicts with your changes. Resolve the files, then stage them.";
+        }
+    }
+
+    [RelayCommand]
+    private Task ApplySelectedStash() => SelectedStash is { } s ? ApplyStashAsync(s, drop: false) : Task.CompletedTask;
+
+    [RelayCommand]
+    private Task PopSelectedStash() => SelectedStash is { } s ? ApplyStashAsync(s, drop: true) : Task.CompletedTask;
+
+    [RelayCommand]
+    private async Task DropSelectedStash()
+    {
+        if (SelectedStash is not { } s) return;
+        if (!await _dialogs.ConfirmAsync("Drop stash", $"Delete '{s.Message}'? Its changes cannot be recovered afterwards.")) return;
+        await RunRemoteAsync("Drop stash", (_, ct) => _git.DropStashAsync(s.Sha, ct), includeStatus: false);
+    }
+
+    [RelayCommand]
+    private async Task Undo()
+    {
+        var plan = _git.GetUndoPlan();
+        if (plan is null)
+        {
+            StatusText = "There is nothing to undo.";
+            return;
+        }
+        if (!await _dialogs.ConfirmAsync("Undo last operation",
+                $"Undo '{plan.Description}'?\n\n{plan.Action}\n\nUndoing again redoes it.")) return;
+        await RunRemoteAsync("Undo", (_, ct) => _git.UndoAsync(ct), includeStatus: true);
+    }
+
+    [RelayCommand]
+    private Task ShowHistory() => OpenHistoryAsync(startOnBlame: false);
+
+    [RelayCommand]
+    private Task ShowBlame() => OpenHistoryAsync(startOnBlame: true);
+
+    private async Task OpenHistoryAsync(bool startOnBlame)
+    {
+        if (CurrentFilePath is not { } path) return;
+        FileHistoryViewModel history;
+        try
+        {
+            history = new FileHistoryViewModel(_git, path, GoToCommit);
+        }
+        catch (Exception ex)
+        {
+            StatusText = ex.Message;
+            return;
+        }
+        await _dialogs.ShowFileHistoryAsync(history, startOnBlame);
+    }
+
+    private void GoToCommit(string sha)
+    {
+        var row = Graph?.Rows.FirstOrDefault(r => r.Commit.Sha == sha);
+        if (row is null)
+        {
+            StatusText = "That commit is not in the loaded history.";
+            return;
+        }
+        ShowWorkingDirectory = false;
+        SelectedRow = row;
+    }
+
+    [RelayCommand]
+    private async Task OpenTools()
+    {
+        var tools = new RepoToolsViewModel(_git, _dialogs, path => OpenRepositoryRequested?.Invoke(path));
+        await _dialogs.ShowRepoToolsAsync(tools);
+        TryRefresh(includeStatus: true);
+    }
+
+    // ---- conflicts and interactive rebase ------------------------------------
+
+    private (string Ours, string Theirs) ConflictLabels() => OperationState.Kind switch
+    {
+        RepoOperation.Rebase => ("Ours \u2014 the branch being rebased onto", "Theirs \u2014 your commit being replayed"),
+        RepoOperation.Merge => ("Ours \u2014 the current branch", "Theirs \u2014 the incoming branch"),
+        _ => ("Ours \u2014 the current branch", "Theirs \u2014 the commit being applied")
+    };
+
+    private async Task LoadConflictAsync(FileChange file)
+    {
+        try
+        {
+            var data = await _git.GetConflictFileAsync(file.Path, CancellationToken.None);
+            // The user may have picked another file while this one was loading.
+            if ((SelectedUnstaged ?? SelectedStaged)?.Path != file.Path) return;
+
+            var (ours, theirs) = ConflictLabels();
+            ActiveConflict = new ConflictViewModel(
+                data, ours, theirs, SaveResolutionAsync, TakeSideAsync,
+                message => _dialogs.ConfirmAsync("Conflict markers remain", message));
+        }
+        catch (Exception ex)
+        {
+            StatusText = ex.Message;
+        }
+    }
+
+    private Task SaveResolutionAsync(string path, string content) =>
+        ResolveAsync(path, () => _git.ResolveFileAsync(path, content, CancellationToken.None));
+
+    private Task TakeSideAsync(ConflictSide side) =>
+        ActiveConflict is { } c
+            ? ResolveAsync(c.Path, () => _git.ResolveWithSideAsync(c.Path, side, CancellationToken.None))
+            : Task.CompletedTask;
+
+    private async Task ResolveAsync(string path, Func<Task> resolve)
+    {
+        try
+        {
+            await resolve();
+            ActiveConflict = null;
+            ActiveDiff = null;
+            SelectedUnstaged = null;
+            RefreshStatus();
+            OperationState = _git.GetOperationState();
+
+            var next = Unstaged.FirstOrDefault(f => f.Status == "Conflicted");
+            if (next is not null) SelectedUnstaged = next;
+            StatusText = next is null
+                ? $"Resolved {path}. No conflicts left" + (HasOperation ? " \u2014 press Continue." : ".")
+                : $"Resolved {path}.";
+        }
+        catch (Exception ex)
+        {
+            StatusText = ex.Message;
+        }
+    }
+
+    private async Task InteractiveRebaseFromAsync(string sha)
+    {
+        IReadOnlyList<RebaseEntry> entries;
+        try
+        {
+            entries = _git.GetRebaseEntries(sha);
+        }
+        catch (Exception ex)
+        {
+            StatusText = ex.Message;
+            return;
+        }
+
+        var request = await _dialogs.ShowInteractiveRebaseAsync(entries, $"{CurrentBranchName} onto {sha[..7]}");
+        if (request is null) return;
+        await RunOperationAsync("Interactive rebase", (p, ct) => _git.InteractiveRebaseAsync(sha, request, p, ct));
+    }
+
+    private async Task MergeAsync(string target, MergeMode mode)
+    {
+        var current = CurrentBranchName;
+        MergePreview preview;
+        try
+        {
+            preview = await _git.PreviewMergeAsync(target, CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            StatusText = ex.Message;
+            return;
+        }
+
+        if (preview.IsUpToDate)
+        {
+            StatusText = $"'{current}' already contains '{target}'.";
+            return;
+        }
+
+        var summary = !preview.CanPreview ? preview.Message ?? ""
+            : preview.IsFastForward ? "This can be fast-forwarded."
+            : preview.IsClean ? "No conflicts expected."
+            : $"{preview.ConflictedFiles.Count} file(s) would conflict:\n" + ListFiles(preview.ConflictedFiles);
+        if (mode == MergeMode.Squash) summary += "\nThe changes are staged, not committed.";
+
+        if (!await _dialogs.ConfirmAsync("Merge", $"Merge '{target}' into '{current}'?\n\n{summary}")) return;
+        await RunOperationAsync($"Merge {target}", (p, ct) => _git.MergeAsync(target, mode, p, ct));
+    }
+
+    private static string ListFiles(IReadOnlyList<string> files)
+    {
+        const int max = 10;
+        var lines = files.Take(max).Select(f => $"  {f}");
+        var more = files.Count > max ? $"\n  ...and {files.Count - max} more" : "";
+        return string.Join("\n", lines) + more;
+    }
+
+    private async Task RebaseOntoAsync(string sha)
+    {
+        var current = CurrentBranchName;
+        if (!await _dialogs.ConfirmAsync("Rebase",
+                $"Rebase '{current}' onto {sha[..7]}?\n\nCommits on '{current}' are rewritten.")) return;
+        await RunOperationAsync("Rebase", (p, ct) => _git.RebaseAsync(sha, p, ct));
+    }
+
+    private async Task RevertAsync(string sha)
+    {
+        if (!await _dialogs.ConfirmAsync("Revert", $"Create a new commit that undoes {sha[..7]}?")) return;
+        await RunOperationAsync("Revert", (p, ct) => _git.RevertAsync(sha, p, ct));
+    }
+
+    private async Task ResetAsync(string sha, ResetMode mode)
+    {
+        var current = CurrentBranchName;
+        if (mode == ResetMode.Hard)
+        {
+            var dirty = Staged.Count + Unstaged.Count;
+            var lost = dirty == 0 ? "There are no uncommitted changes." : $"{dirty} uncommitted change(s) will be discarded.";
+            if (!await _dialogs.ConfirmAsync("Hard reset",
+                    $"Reset '{current}' to {sha[..7]}?\n\n{lost} Later commits stay reachable through the reflog.")) return;
+        }
+        await RunOperationAsync($"Reset ({mode.ToString().ToLowerInvariant()})", (p, ct) => _git.ResetAsync(sha, mode, p, ct));
+    }
+
+    [RelayCommand(CanExecute = nameof(CanRemote))]
+    private Task ContinueOperation() => RunOperationAsync("Continue", (p, ct) => _git.ContinueOperationAsync(p, ct));
+
+    [RelayCommand(CanExecute = nameof(CanRemote))]
+    private Task SkipOperation() => RunOperationAsync("Skip", (p, ct) => _git.SkipOperationAsync(p, ct));
+
+    [RelayCommand(CanExecute = nameof(CanRemote))]
+    private async Task AbortOperation()
+    {
+        if (!await _dialogs.ConfirmAsync("Abort", $"{OperationState.Describe()}. Abort and return to the state before it started?")) return;
+        await RunOperationAsync("Abort", (p, ct) => _git.AbortOperationAsync(p, ct));
+    }
+
+    /// <summary>Runs a history-changing operation; a stop for conflicts switches to the working directory so they can be resolved.</summary>
+    private async Task RunOperationAsync(string name, Func<IProgress<GitProgress>, CancellationToken, Task<GitOpResult>> operation)
+    {
+        GitOpResult? result = null;
+        await RunRemoteAsync(name, async (p, ct) => result = await operation(p, ct), includeStatus: true);
+        if (result is null) return;
+
+        if (result.Paused)
+        {
+            ShowWorkingDirectory = true;
+            StatusText = $"{name} stopped. Resolve conflicts, stage the files, then Continue \u2014 or Abort.";
+        }
+        else if (result.Success)
+        {
+            StatusText = $"{name} complete.";
+        }
     }
 
     private async Task CreateBranchAsync(string sha, bool checkout)

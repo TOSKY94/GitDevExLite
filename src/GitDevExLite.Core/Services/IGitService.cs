@@ -39,4 +39,41 @@ public interface IGitService : IDisposable
     void DeleteTag(string name);
     Task PushTagAsync(string name, IProgress<GitProgress>? progress, CancellationToken ct);
     Task DeleteRemoteTagAsync(string name, IProgress<GitProgress>? progress, CancellationToken ct);
+
+    RepoOperationState GetOperationState();
+    Task<MergePreview> PreviewMergeAsync(string target, CancellationToken ct);
+    Task<GitOpResult> MergeAsync(string target, MergeMode mode, IProgress<GitProgress>? progress, CancellationToken ct);
+    Task<GitOpResult> RebaseAsync(string onto, IProgress<GitProgress>? progress, CancellationToken ct);
+    Task<GitOpResult> CherryPickAsync(IReadOnlyList<string> shas, IProgress<GitProgress>? progress, CancellationToken ct);
+    Task<GitOpResult> RevertAsync(string sha, IProgress<GitProgress>? progress, CancellationToken ct);
+    Task<GitOpResult> ResetAsync(string sha, ResetMode mode, IProgress<GitProgress>? progress, CancellationToken ct);
+    Task<GitOpResult> ContinueOperationAsync(IProgress<GitProgress>? progress, CancellationToken ct);
+    Task<GitOpResult> SkipOperationAsync(IProgress<GitProgress>? progress, CancellationToken ct);
+    Task<GitOpResult> AbortOperationAsync(IProgress<GitProgress>? progress, CancellationToken ct);
+
+    Task<ConflictFile> GetConflictFileAsync(string path, CancellationToken ct);
+    Task ResolveFileAsync(string path, string content, CancellationToken ct);
+    Task ResolveWithSideAsync(string path, ConflictSide side, CancellationToken ct);
+
+    IReadOnlyList<RebaseEntry> GetRebaseEntries(string baseRev);
+    Task<GitOpResult> InteractiveRebaseAsync(string baseRev, RebaseRequest request, IProgress<GitProgress>? progress, CancellationToken ct);
+
+    Task<GitOpResult> CreateStashAsync(string? message, bool includeUntracked, CancellationToken ct);
+    Task<GitOpResult> ApplyStashAsync(string sha, bool drop, CancellationToken ct);
+    Task DropStashAsync(string sha, CancellationToken ct);
+
+    IReadOnlyList<FileHistoryEntry> GetFileHistory(string path, int maxCount = 500);
+    IReadOnlyList<BlameLine> GetBlame(string path, string? rev = null);
+
+    IReadOnlyList<ReflogItem> GetReflog(int maxCount = 200);
+    UndoPlan? GetUndoPlan();
+    Task UndoAsync(CancellationToken ct);
+
+    IReadOnlyList<SubmoduleInfo> GetSubmodules();
+    Task UpdateSubmodulesAsync(string? path, IProgress<GitProgress>? progress, CancellationToken ct);
+
+    Task<IReadOnlyList<WorktreeInfo>> GetWorktreesAsync(CancellationToken ct);
+    Task AddWorktreeAsync(string path, string? newBranch, string? commitish, CancellationToken ct);
+    Task RemoveWorktreeAsync(string path, bool force, CancellationToken ct);
+    Task PruneWorktreesAsync(CancellationToken ct);
 }

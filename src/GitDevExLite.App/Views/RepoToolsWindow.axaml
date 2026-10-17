@@ -1,0 +1,82 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:GitDevExLite.App.ViewModels"
+        xmlns:s="using:GitDevExLite.Core.Services"
+        x:Class="GitDevExLite.App.Views.RepoToolsWindow"
+        x:DataType="vm:RepoToolsViewModel"
+        Title="Repository tools" Width="860" Height="560"
+        WindowStartupLocation="CenterOwner">
+  <DockPanel>
+    <Border DockPanel.Dock="Bottom" Padding="8,4" BorderThickness="0,1,0,0" BorderBrush="#33FFFFFF">
+      <DockPanel>
+        <ProgressBar DockPanel.Dock="Right" Width="120" IsIndeterminate="True" IsVisible="{Binding IsBusy}" />
+        <TextBlock Text="{Binding Status}" Opacity="0.8" TextWrapping="Wrap" />
+      </DockPanel>
+    </Border>
+
+    <TabControl>
+      <TabItem Header="Reflog">
+        <Grid RowDefinitions="*,Auto" Margin="6">
+          <ListBox Grid.Row="0" ItemsSource="{Binding Reflog}" SelectedItem="{Binding SelectedReflog}">
+            <ListBox.ItemTemplate>
+              <DataTemplate x:DataType="s:ReflogItem">
+                <Grid ColumnDefinitions="70,*,150">
+                  <TextBlock Grid.Column="0" Text="{Binding ShortSha}" FontFamily="Consolas,Menlo,monospace" Foreground="#8AB4F8" />
+                  <TextBlock Grid.Column="1" Text="{Binding Message}" TextTrimming="CharacterEllipsis" />
+                  <TextBlock Grid.Column="2" Text="{Binding When, StringFormat={}{0:yyyy-MM-dd HH:mm}}" Opacity="0.6" />
+                </Grid>
+              </DataTemplate>
+            </ListBox.ItemTemplate>
+          </ListBox>
+          <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="6" Margin="0,6,0,0">
+            <Button Content="Reset (mixed) to here" Command="{Binding ResetMixedCommand}" />
+            <Button Content="Reset (hard) to here..." Command="{Binding ResetHardCommand}" />
+          </StackPanel>
+        </Grid>
+      </TabItem>
+
+      <TabItem Header="Submodules">
+        <Grid RowDefinitions="*,Auto" Margin="6">
+          <ListBox Grid.Row="0" ItemsSource="{Binding Submodules}" SelectedItem="{Binding SelectedSubmodule}">
+            <ListBox.ItemTemplate>
+              <DataTemplate x:DataType="s:SubmoduleInfo">
+                <Grid ColumnDefinitions="220,120,*">
+                  <TextBlock Grid.Column="0" Text="{Binding Path}" />
+                  <TextBlock Grid.Column="1" Text="{Binding StatusText}" Opacity="0.7" />
+                  <TextBlock Grid.Column="2" Text="{Binding Url}" Opacity="0.5" TextTrimming="CharacterEllipsis" />
+                </Grid>
+              </DataTemplate>
+            </ListBox.ItemTemplate>
+          </ListBox>
+          <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="6" Margin="0,6,0,0">
+            <Button Content="Init / update selected" Command="{Binding UpdateSubmoduleCommand}" />
+            <Button Content="Init / update all" Command="{Binding UpdateAllSubmodulesCommand}" />
+            <Button Content="Open in new tab" Command="{Binding OpenSubmoduleCommand}" />
+          </StackPanel>
+        </Grid>
+      </TabItem>
+
+      <TabItem Header="Worktrees">
+        <Grid RowDefinitions="*,Auto" Margin="6">
+          <ListBox Grid.Row="0" ItemsSource="{Binding Worktrees}" SelectedItem="{Binding SelectedWorktree}">
+            <ListBox.ItemTemplate>
+              <DataTemplate x:DataType="s:WorktreeInfo">
+                <Grid ColumnDefinitions="180,*,120">
+                  <TextBlock Grid.Column="0" Text="{Binding Display}" />
+                  <TextBlock Grid.Column="1" Text="{Binding Path}" Opacity="0.6" TextTrimming="CharacterEllipsis" />
+                  <TextBlock Grid.Column="2" Text="{Binding Flags}" Opacity="0.7" />
+                </Grid>
+              </DataTemplate>
+            </ListBox.ItemTemplate>
+          </ListBox>
+          <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="6" Margin="0,6,0,0">
+            <Button Content="Add..." Command="{Binding AddWorktreeCommand}" />
+            <Button Content="Remove..." Command="{Binding RemoveWorktreeCommand}" />
+            <Button Content="Prune" Command="{Binding PruneWorktreesCommand}" />
+            <Button Content="Open in new tab" Command="{Binding OpenWorktreeCommand}" />
+          </StackPanel>
+        </Grid>
+      </TabItem>
+    </TabControl>
+  </DockPanel>
+</Window>
