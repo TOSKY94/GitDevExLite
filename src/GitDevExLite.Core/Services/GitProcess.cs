@@ -4,10 +4,36 @@ using System.Text;
 
 namespace GitDevExLite.Core.Services;
 
+/// <summary>Exit code and captured output of a finished git process.</summary>
+internal sealed record GitResult(int ExitCode, string StdOut, string StdErr)
+{
+    public string Combined => string.Join("\n", new[] { StdOut.Trim(), StdErr.Trim() }.Where(s => s.Length > 0));
+}
+
 /// <summary>Runs the git CLI asynchronously with progress reporting and cancellation.</summary>
 internal static class GitProcess
 {
     public static async Task<string> RunAsync(
+        string? workingDirectory,
+        IEnumerable<string> args,
+        IProgress<GitProgress>? progress,
+        CancellationToken ct,
+        IReadOnlyDictionary<string, string>? env = null,
+        string? stdin = null)
+    {
+        var result = await ExecuteAsync(workingDirectory, args, progress, ct, env, stdin);
+        if (result.ExitCode == 0) return result.StdOut;
+
+        var message = string.IsNullOrWhiteSpace(result.StdErr)
+            ? $"git exited with code {result.ExitCode}."
+            : result.StdErr;
+        throw GitAuthFailure.IsAuthFailure(result.StdErr)
+            ? new GitAuthException(message, result.ExitCode)
+            : new GitCommandException(message, result.ExitCode);
+    }
+
+    /// <summary>Like <see cref="RunAsync"/> but returns non-zero exits instead of throwing, for commands whose exit code carries meaning.</summary>
+    public static async Task<GitResult> ExecuteAsync(
         string? workingDirectory,
         IEnumerable<string> args,
         IProgress<GitProgress>? progress,
@@ -72,12 +98,7 @@ internal static class GitProcess
             var errors = await stderr;
 
             if (ct.IsCancellationRequested) throw new OperationCanceledException(ct);
-            if (process.ExitCode == 0) return output;
-
-            var message = string.IsNullOrWhiteSpace(errors) ? $"git exited with code {process.ExitCode}." : errors;
-            throw GitAuthFailure.IsAuthFailure(errors)
-                ? new GitAuthException(message, process.ExitCode)
-                : new GitCommandException(message, process.ExitCode);
+            return new GitResult(process.ExitCode, output, errors);
         }
     }
 

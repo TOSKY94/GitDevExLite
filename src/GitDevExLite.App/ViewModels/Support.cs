@@ -43,6 +43,12 @@ public interface IDialogService
 
     /// <summary>Shows the clone dialog and runs the clone inside it; returns the cloned folder, or null if cancelled.</summary>
     Task<string?> ShowCloneDialogAsync(CloneRunner clone, string defaultParentFolder);
+
+    /// <summary>Lets the user pick, reorder, squash, reword and drop commits; null if cancelled.</summary>
+    Task<RebaseRequest?> ShowInteractiveRebaseAsync(IReadOnlyList<RebaseEntry> entries, string description);
+
+    Task ShowFileHistoryAsync(FileHistoryViewModel history, bool startOnBlame);
+    Task ShowRepoToolsAsync(RepoToolsViewModel tools);
 }
 
 /// <summary>Observable options shared by the shell and every tab.</summary>

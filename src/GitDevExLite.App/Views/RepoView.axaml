@@ -46,7 +46,14 @@
           </ListBox>
         </Expander>
         <Expander Header="Stashes" HorizontalAlignment="Stretch">
-          <ListBox ItemsSource="{Binding Stashes}">
+          <ListBox ItemsSource="{Binding Stashes}" SelectedItem="{Binding SelectedStash}">
+            <ListBox.ContextMenu>
+              <ContextMenu>
+                <MenuItem Header="Apply" Command="{Binding ApplySelectedStashCommand}" />
+                <MenuItem Header="Pop (apply and delete)" Command="{Binding PopSelectedStashCommand}" />
+                <MenuItem Header="Drop..." Command="{Binding DropSelectedStashCommand}" />
+              </ContextMenu>
+            </ListBox.ContextMenu>
             <ListBox.ItemTemplate>
               <DataTemplate x:DataType="m:StashInfo">
                 <TextBlock Text="{Binding Message}" />
@@ -61,7 +68,19 @@
 
     <Grid Grid.Column="2" RowDefinitions="Auto,*,Auto,*">
       <!-- Search and mode toggle -->
-      <Grid Grid.Row="0" ColumnDefinitions="*,Auto,Auto,Auto,Auto" Margin="6">
+      <StackPanel Grid.Row="0">
+      <!-- Merge / rebase / cherry-pick / revert in progress -->
+      <Border IsVisible="{Binding HasOperation}" Background="#33FFB74D" Padding="8,6" Margin="6,6,6,0" CornerRadius="4">
+        <DockPanel>
+          <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="6">
+            <Button Content="Continue" Command="{Binding ContinueOperationCommand}" />
+            <Button Content="Skip" Command="{Binding SkipOperationCommand}" IsVisible="{Binding CanSkipOperation}" />
+            <Button Content="Abort" Command="{Binding AbortOperationCommand}" />
+          </StackPanel>
+          <TextBlock Text="{Binding OperationBanner}" VerticalAlignment="Center" TextWrapping="Wrap" />
+        </DockPanel>
+      </Border>
+      <Grid ColumnDefinitions="*,Auto,Auto,Auto,Auto" Margin="6">
         <TextBox Grid.Column="0" Text="{Binding SearchText}"
                  Watermark="Search message, author, SHA or branch" />
         <Button Grid.Column="1" Content="&#x25B2;" Command="{Binding PreviousMatchCommand}" ToolTip.Tip="Previous match" />
@@ -70,6 +89,7 @@
         <ToggleButton Grid.Column="4" Content="Working directory"
                       IsChecked="{Binding ShowWorkingDirectory, Mode=TwoWay}" />
       </Grid>
+      </StackPanel>
 
       <ScrollViewer Grid.Row="1" HorizontalScrollBarVisibility="Auto">
         <ctl:CommitGraphControl Graph="{Binding Graph}"
@@ -98,6 +118,8 @@
             </TextBlock>
             <TextBlock Text="Changed files" FontWeight="SemiBold" Margin="0,8,0,0" />
           </StackPanel>
+          <TextBlock Grid.Row="0" Text="{Binding DetailHeading}" FontWeight="SemiBold" TextWrapping="Wrap" Margin="0,0,0,6"
+                     IsVisible="{Binding DetailHeading, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
           <ListBox Grid.Row="1" ItemsSource="{Binding CommitFiles}" SelectedItem="{Binding SelectedCommitFile}">
             <ListBox.ItemTemplate>
               <DataTemplate x:DataType="m:ChangedFile">
@@ -165,10 +187,15 @@
         <GridSplitter Grid.Column="1" Width="4" />
 
         <!-- Diff -->
-        <Grid Grid.Column="2" RowDefinitions="Auto,*">
+        <Grid Grid.Column="2" RowDefinitions="Auto,*"
+              IsVisible="{Binding ActiveConflict, Converter={x:Static ObjectConverters.IsNull}}">
           <DockPanel Grid.Row="0" Margin="6,4">
             <ToggleButton DockPanel.Dock="Right" Content="Side by side" Margin="6,0,0,0"
                           IsChecked="{Binding SideBySide, Mode=TwoWay}" />
+            <Button DockPanel.Dock="Right" Content="Blame" Margin="6,0,0,0"
+                    Command="{Binding ShowBlameCommand}" IsEnabled="{Binding HasCurrentFile}" />
+            <Button DockPanel.Dock="Right" Content="History" Margin="6,0,0,0"
+                    Command="{Binding ShowHistoryCommand}" IsEnabled="{Binding HasCurrentFile}" />
             <Button DockPanel.Dock="Right" Content="{Binding SelectionActionText}"
                     Command="{Binding StageSelectedCommand}" IsVisible="{Binding DiffEditable}" />
             <TextBlock Text="{Binding ActiveDiff.Path}" VerticalAlignment="Center" Opacity="0.8"
@@ -182,6 +209,11 @@
                         Selection="{Binding Selection}"
                         HunkCommand="{Binding ApplyHunkCommand}" />
         </Grid>
+
+        <!-- 3-way conflict resolution -->
+        <Border Grid.Column="2" IsVisible="{Binding ActiveConflict, Converter={x:Static ObjectConverters.IsNotNull}}">
+          <ctl:ConflictView DataContext="{Binding ActiveConflict}" />
+        </Border>
       </Grid>
     </Grid>
   </Grid>

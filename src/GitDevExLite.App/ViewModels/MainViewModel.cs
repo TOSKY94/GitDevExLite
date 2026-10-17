@@ -63,6 +63,7 @@ public partial class MainViewModel : ObservableObject
             }
 
             var tab = new RepoTabViewModel(_gitFactory(), _dialogs, Options);
+            tab.OpenRepositoryRequested += OpenRepository;
             tab.Open(path);
             var resolved = tab.RepositoryPath!;
 

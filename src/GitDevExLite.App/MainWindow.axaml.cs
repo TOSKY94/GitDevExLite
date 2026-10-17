@@ -285,6 +285,26 @@ public partial class MainWindow : Window, IDialogService
         return await dialog.ShowDialog<string?>(this);
     }
 
+    public async Task<RebaseRequest?> ShowInteractiveRebaseAsync(IReadOnlyList<RebaseEntry> entries, string description)
+    {
+        var dialog = new Dialogs.InteractiveRebaseDialog(entries, description);
+        await dialog.ShowDialog(this);
+        return dialog.Result;
+    }
+
+    public async Task ShowFileHistoryAsync(FileHistoryViewModel history, bool startOnBlame)
+    {
+        var window = new Views.FileHistoryWindow { DataContext = history };
+        if (startOnBlame) window.ShowBlameTab();
+        await window.ShowDialog(this);
+    }
+
+    public async Task ShowRepoToolsAsync(RepoToolsViewModel tools)
+    {
+        await tools.LoadAsync();
+        await new Views.RepoToolsWindow { DataContext = tools }.ShowDialog(this);
+    }
+
     private static Window Dialog(string title, Control content) => new()
     {
         Title = title,

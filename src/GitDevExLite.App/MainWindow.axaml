@@ -24,6 +24,9 @@
         </Menu>
         <Button Content="Fetch" Command="{Binding SelectedTab.FetchCommand}" />
         <Button Content="Push" Command="{Binding SelectedTab.PushCommand}" />
+        <Button Content="Stash..." Command="{Binding SelectedTab.StashCommand}" />
+        <Button Content="Undo" Command="{Binding SelectedTab.UndoCommand}" ToolTip.Tip="Undo the last operation using the reflog" />
+        <Button Content="Tools..." Command="{Binding SelectedTab.OpenToolsCommand}" ToolTip.Tip="Reflog, submodules, worktrees" />
         <Button Content="Refresh" Command="{Binding RefreshSelectedCommand}" />
         <Button Content="Checkout" Command="{Binding CheckoutSelectedCommand}" />
       </StackPanel>
