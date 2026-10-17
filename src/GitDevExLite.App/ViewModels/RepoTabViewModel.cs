@@ -461,6 +461,13 @@ public partial class RepoTabViewModel : ObservableObject, IDisposable
         NotifyPullRequestActionStateChanged();
     }
 
+    partial void OnProviderCapabilitiesChanged(ProviderCapabilities value)
+    {
+        OnPropertyChanged(nameof(CanCreatePullRequest));
+        OnPropertyChanged(nameof(CanCommentSelectedPullRequestInline));
+        NotifyPullRequestActionStateChanged();
+    }
+
     partial void OnHostedRepositoryChanged(HostedRepositoryId? value)
     {
         OnPropertyChanged(nameof(HasHostedRepository));

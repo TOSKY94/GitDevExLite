@@ -65,6 +65,9 @@
           <StackPanel Spacing="6">
             <TextBlock Text="{Binding ProviderSummary}" TextWrapping="Wrap" Opacity="0.8" />
             <StackPanel Orientation="Horizontal" Spacing="6">
+              <Button Content="Create PR"
+                Command="{Binding CreatePullRequestCommand}"
+                IsEnabled="{Binding CanCreatePullRequest}" />
               <Button Content="Sign in"
                       Command="{Binding SignInProviderCommand}"
                       IsVisible="{Binding CanSignInToProvider}" />
@@ -144,7 +147,6 @@
                       IsVisible="{Binding HasPullRequestDetail}">
             <TextBlock Text="{Binding PullRequestDetailTitle}" FontWeight="SemiBold" TextWrapping="Wrap" />
             <WrapPanel Orientation="Horizontal">
-              <Button Content="Create PR" Command="{Binding CreatePullRequestCommand}" Margin="0,0,6,6" />
               <Button Content="Checkout" Command="{Binding CheckoutPullRequestCommand}" Margin="0,0,6,6" />
               <Button Content="Approve" Command="{Binding ApprovePullRequestCommand}" Margin="0,0,6,6" />
               <Button Content="Request changes" Command="{Binding RequestPullRequestChangesCommand}" Margin="0,0,6,6" />
