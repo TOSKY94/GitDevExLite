@@ -188,9 +188,14 @@ public sealed class CommitGraphControl : Control
             _ => "#8D6E63"
         };
         var ab = r.AheadBehindText;
-        var label = Text((r.IsHead ? "● " : "") + r.Name + (ab.Length > 0 ? "  " + ab : ""), 11, Brushes.White, 260);
+        var text = (r.IsHead ? "\u2714 " : "") + r.Name + (ab.Length > 0 ? "  " + ab : "");
+        var label = Text(text, 11, Brushes.White, 260);
+        if (r.IsHead) label = new FormattedText(text, CultureInfo.CurrentUICulture, FlowDirection.LeftToRight,
+            new Typeface(Typeface.Default.FontFamily, FontStyle.Normal, FontWeight.Bold), 11, Brushes.White)
+        { MaxTextWidth = 260, MaxTextHeight = RowHeight, Trimming = TextTrimming.CharacterEllipsis };
         var w = label.Width + 12;
-        ctx.DrawRectangle(Brush.Parse(color), null, new Rect(x, y + 5, w, RowHeight - 10), 4, 4);
+        var border = r.IsHead ? new Pen(Brushes.White, 2) : null;
+        ctx.DrawRectangle(Brush.Parse(color), border, new Rect(x, y + 5, w, RowHeight - 10), 4, 4);
         ctx.DrawText(label, new Point(x + 6, y + (RowHeight - label.Height) / 2));
         return w;
     }
