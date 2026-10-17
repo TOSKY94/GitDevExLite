@@ -5,6 +5,7 @@ using Avalonia.Interactivity;
 using Avalonia.Layout;
 using Avalonia.Platform.Storage;
 using GitDevExLite.App.ViewModels;
+using GitDevExLite.Core.Services;
 
 namespace GitDevExLite.App;
 
@@ -110,6 +111,178 @@ public partial class MainWindow : Window, IDialogService
     public async Task CopyTextAsync(string text)
     {
         if (Clipboard is { } clipboard) await clipboard.SetTextAsync(text);
+    }
+
+    public async Task<CredentialChoice?> PromptCredentialsAsync(CredentialRequest request)
+    {
+        var message = new TextBlock
+        {
+            Text = request.Message,
+            TextWrapping = Avalonia.Media.TextWrapping.Wrap,
+            MaxWidth = 440,
+            Opacity = 0.8
+        };
+        var ok = new Button { Content = request.IsSsh ? "Close" : "Continue", IsDefault = true };
+        var cancel = new Button { Content = "Cancel", IsCancel = true };
+        var buttons = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            HorizontalAlignment = HorizontalAlignment.Right,
+            Spacing = 8
+        };
+
+        var panel = new StackPanel { Spacing = 8, Margin = new Avalonia.Thickness(16) };
+        panel.Children.Add(new TextBlock { Text = "Authentication required", FontWeight = Avalonia.Media.FontWeight.SemiBold });
+        panel.Children.Add(message);
+
+        if (request.IsSsh)
+        {
+            panel.Children.Add(new TextBlock
+            {
+                Text = "This remote uses SSH. Load your key into ssh-agent (ssh-add) or configure it in ~/.ssh/config, then retry.",
+                TextWrapping = Avalonia.Media.TextWrapping.Wrap,
+                MaxWidth = 440
+            });
+            buttons.Children.Add(ok);
+            panel.Children.Add(buttons);
+            var sshDialog = Dialog("Authentication required", panel);
+            ok.Click += (_, _) => sshDialog.Close(null);
+            await sshDialog.ShowDialog<object?>(this);
+            return null;
+        }
+
+        GitCredentials.TryParseHttp(request.Url, out _, out var host);
+        var canUseGcm = request.GcmAvailable && host.Length > 0;
+        var gcm = new RadioButton { Content = $"Sign in to {host} with Git Credential Manager", GroupName = "auth", IsChecked = canUseGcm, IsVisible = canUseGcm };
+        var token = new RadioButton { Content = "Use a personal access token", GroupName = "auth", IsChecked = !canUseGcm };
+        var user = new TextBox { Watermark = "Username", Text = "PAT" };
+        var secret = new TextBox { Watermark = "Token", PasswordChar = '\u2022', MinWidth = 320 };
+
+        void Sync()
+        {
+            var useToken = token.IsChecked == true;
+            user.IsEnabled = secret.IsEnabled = useToken;
+        }
+        gcm.IsCheckedChanged += (_, _) => Sync();
+        token.IsCheckedChanged += (_, _) => Sync();
+        Sync();
+
+        panel.Children.Add(gcm);
+        panel.Children.Add(token);
+        panel.Children.Add(user);
+        panel.Children.Add(secret);
+        buttons.Children.Add(ok);
+        buttons.Children.Add(cancel);
+        panel.Children.Add(buttons);
+
+        var dialog = Dialog("Authentication required", panel);
+        ok.Click += (_, _) =>
+        {
+            if (gcm.IsChecked == true) { dialog.Close(new CredentialChoice(true, null, null)); return; }
+            if (string.IsNullOrWhiteSpace(user.Text) || string.IsNullOrEmpty(secret.Text)) return;
+            dialog.Close(new CredentialChoice(false, user.Text.Trim(), secret.Text));
+        };
+        cancel.Click += (_, _) => dialog.Close(null);
+        return await dialog.ShowDialog<CredentialChoice?>(this);
+    }
+
+    public async Task<string?> ShowCloneDialogAsync(CloneRunner clone, string defaultParentFolder)
+    {
+        var url = new TextBox { Watermark = "Repository URL", MinWidth = 420 };
+        var parent = new TextBox { Text = defaultParentFolder, MinWidth = 340 };
+        var browse = new Button { Content = "Browse..." };
+        var status = new TextBlock { TextWrapping = Avalonia.Media.TextWrapping.Wrap, MaxWidth = 440, Opacity = 0.8 };
+        var bar = new ProgressBar { Maximum = 100, IsVisible = false };
+        var go = new Button { Content = "Clone", IsDefault = true };
+        var cancel = new Button { Content = "Cancel" };
+
+        var folderRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6, Children = { parent, browse } };
+        var buttons = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            HorizontalAlignment = HorizontalAlignment.Right,
+            Spacing = 8,
+            Children = { go, cancel }
+        };
+        var dialog = Dialog("Clone repository", new StackPanel
+        {
+            Spacing = 8,
+            Margin = new Avalonia.Thickness(16),
+            Children =
+            {
+                new TextBlock { Text = "Repository URL" }, url,
+                new TextBlock { Text = "Clone into folder" }, folderRow,
+                bar, status, buttons
+            }
+        });
+
+        CancellationTokenSource? cts = null;
+
+        browse.Click += async (_, _) =>
+        {
+            var picked = await dialog.StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions { AllowMultiple = false });
+            if (picked.Count > 0 && picked[0].TryGetLocalPath() is { } p) parent.Text = p;
+        };
+
+        go.Click += async (_, _) =>
+        {
+            if (cts is not null) return;
+            var address = url.Text?.Trim() ?? "";
+            if (address.Length == 0 || string.IsNullOrWhiteSpace(parent.Text))
+            {
+                status.Text = "Enter a URL and a folder.";
+                return;
+            }
+
+            var name = GitClone.SuggestFolderName(address);
+            var destination = System.IO.Path.Combine(parent.Text.Trim(), name);
+            cts = new CancellationTokenSource();
+            go.IsEnabled = url.IsEnabled = parent.IsEnabled = browse.IsEnabled = false;
+            bar.IsVisible = true;
+            bar.IsIndeterminate = true;
+            status.Text = "Cloning...";
+
+            var progress = new Progress<GitProgress>(p =>
+            {
+                status.Text = p.Text;
+                if (p.Percent is { } pct)
+                {
+                    bar.IsIndeterminate = false;
+                    bar.Value = pct;
+                }
+            });
+
+            try
+            {
+                await clone(address, destination, progress, cts.Token);
+                cts.Dispose();
+                cts = null;
+                dialog.Close(destination);
+                return;
+            }
+            catch (OperationCanceledException)
+            {
+                status.Text = "Cancelled.";
+            }
+            catch (Exception ex)
+            {
+                status.Text = ex.Message;
+            }
+
+            cts?.Dispose();
+            cts = null;
+            go.IsEnabled = url.IsEnabled = parent.IsEnabled = browse.IsEnabled = true;
+            bar.IsVisible = false;
+        };
+
+        cancel.Click += (_, _) =>
+        {
+            if (cts is not null) cts.Cancel();
+            else dialog.Close(null);
+        };
+        dialog.Closing += (_, _) => cts?.Cancel();
+
+        return await dialog.ShowDialog<string?>(this);
     }
 
     private static Window Dialog(string title, Control content) => new()

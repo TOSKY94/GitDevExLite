@@ -187,7 +187,8 @@ public sealed class CommitGraphControl : Control
             RefKind.RemoteBranch => "#1565C0",
             _ => "#8D6E63"
         };
-        var label = Text((r.IsHead ? "● " : "") + r.Name, 11, Brushes.White, 220);
+        var ab = r.AheadBehindText;
+        var label = Text((r.IsHead ? "● " : "") + r.Name + (ab.Length > 0 ? "  " + ab : ""), 11, Brushes.White, 260);
         var w = label.Width + 12;
         ctx.DrawRectangle(Brush.Parse(color), null, new Rect(x, y + 5, w, RowHeight - 10), 4, 4);
         ctx.DrawText(label, new Point(x + 6, y + (RowHeight - label.Height) / 2));

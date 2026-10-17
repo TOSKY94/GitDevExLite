@@ -12,7 +12,10 @@
           <ListBox ItemsSource="{Binding LocalBranches}" SelectedItem="{Binding SelectedBranch}">
             <ListBox.ItemTemplate>
               <DataTemplate x:DataType="m:RefInfo">
-                <TextBlock Text="{Binding Name}" />
+                <StackPanel Orientation="Horizontal" Spacing="6">
+                  <TextBlock Text="{Binding Name}" />
+                  <TextBlock Text="{Binding AheadBehindText}" Opacity="0.7" ToolTip.Tip="{Binding Upstream}" />
+                </StackPanel>
               </DataTemplate>
             </ListBox.ItemTemplate>
           </ListBox>
@@ -27,7 +30,14 @@
           </ListBox>
         </Expander>
         <Expander Header="Tags" HorizontalAlignment="Stretch">
-          <ListBox ItemsSource="{Binding Tags}">
+          <ListBox ItemsSource="{Binding Tags}" SelectedItem="{Binding SelectedTag}">
+            <ListBox.ContextMenu>
+              <ContextMenu>
+                <MenuItem Header="Push tag" Command="{Binding PushSelectedTagCommand}" />
+                <MenuItem Header="Delete tag..." Command="{Binding DeleteSelectedTagCommand}" />
+                <MenuItem Header="Delete tag from remote..." Command="{Binding DeleteSelectedTagFromRemoteCommand}" />
+              </ContextMenu>
+            </ListBox.ContextMenu>
             <ListBox.ItemTemplate>
               <DataTemplate x:DataType="m:RefInfo">
                 <TextBlock Text="{Binding Name}" />

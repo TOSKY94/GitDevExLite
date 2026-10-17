@@ -1,4 +1,5 @@
 using GitDevExLite.Core.Models;
+using GitDevExLite.Core.Services;
 
 namespace GitDevExLite.App.ViewModels;
 
@@ -25,9 +26,53 @@ public sealed class LineSelection
 
 public sealed record ContextAction(string Header, Func<Task> Execute);
 
+/// <summary>Why credentials are needed. <see cref="Url"/> is the remote the failed operation talked to.</summary>
+public sealed record CredentialRequest(string? Url, string Message, bool IsSsh, bool GcmAvailable);
+
+/// <summary>UseGcm triggers an interactive Git Credential Manager sign-in; otherwise Username/Token are stored.</summary>
+public sealed record CredentialChoice(bool UseGcm, string? Username, string? Token);
+
+public delegate Task CloneRunner(string url, string destination, IProgress<GitProgress> progress, CancellationToken ct);
+
 public interface IDialogService
 {
     Task<string?> PromptAsync(string title, string label, string initial = "");
     Task<bool> ConfirmAsync(string title, string message);
     Task CopyTextAsync(string text);
+    Task<CredentialChoice?> PromptCredentialsAsync(CredentialRequest request);
+
+    /// <summary>Shows the clone dialog and runs the clone inside it; returns the cloned folder, or null if cancelled.</summary>
+    Task<string?> ShowCloneDialogAsync(CloneRunner clone, string defaultParentFolder);
+}
+
+/// <summary>Observable options shared by the shell and every tab.</summary>
+public sealed partial class RemoteOptions : CommunityToolkit.Mvvm.ComponentModel.ObservableObject
+{
+    [CommunityToolkit.Mvvm.ComponentModel.ObservableProperty] private bool _autoFetch = true;
+    [CommunityToolkit.Mvvm.ComponentModel.ObservableProperty] private bool _pruneOnFetch = true;
+    public int AutoFetchMinutes { get; set; } = 5;
+}
+
+public static class AuthRetry
+{
+    /// <summary>Runs <paramref name="operation"/>; on an auth failure asks for credentials once and retries.</summary>
+    public static async Task RunAsync(IDialogService dialogs, Func<string?> remoteUrl, Func<Task> operation, CancellationToken ct)
+    {
+        try
+        {
+            await operation();
+        }
+        catch (GitAuthException ex)
+        {
+            var url = remoteUrl();
+            var request = new CredentialRequest(
+                url, ex.Message, GitCredentials.IsSshUrl(url), await GitCredentials.IsGcmAvailableAsync());
+            var choice = await dialogs.PromptCredentialsAsync(request);
+            if (choice is null || request.IsSsh || url is null) throw;
+
+            if (choice.UseGcm) await GitCredentials.SignInAsync(url, ct);
+            else await GitCredentials.StoreTokenAsync(url, choice.Username ?? "", choice.Token ?? "", ct);
+            await operation();
+        }
+    }
 }

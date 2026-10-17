@@ -9,20 +9,43 @@
     <Border DockPanel.Dock="Top" Padding="8,4" BorderThickness="0,0,0,1" BorderBrush="#33FFFFFF">
       <StackPanel Orientation="Horizontal" Spacing="8">
         <Button Content="Open..." Click="OnOpenClick" />
+        <Button Content="Clone..." Command="{Binding CloneCommand}" />
         <Menu>
           <MenuItem x:Name="RecentMenu" Header="Recent" />
+          <MenuItem Header="Pull">
+            <MenuItem Header="Merge" Command="{Binding SelectedTab.PullMergeCommand}" />
+            <MenuItem Header="Rebase" Command="{Binding SelectedTab.PullRebaseCommand}" />
+            <MenuItem Header="Fast-forward only" Command="{Binding SelectedTab.PullFastForwardCommand}" />
+          </MenuItem>
+          <MenuItem Header="Options">
+            <MenuItem Header="Auto-fetch" ToggleType="CheckBox" IsChecked="{Binding Options.AutoFetch, Mode=TwoWay}" />
+            <MenuItem Header="Prune on fetch" ToggleType="CheckBox" IsChecked="{Binding Options.PruneOnFetch, Mode=TwoWay}" />
+          </MenuItem>
         </Menu>
+        <Button Content="Fetch" Command="{Binding SelectedTab.FetchCommand}" />
+        <Button Content="Push" Command="{Binding SelectedTab.PushCommand}" />
         <Button Content="Refresh" Command="{Binding RefreshSelectedCommand}" />
         <Button Content="Checkout" Command="{Binding CheckoutSelectedCommand}" />
       </StackPanel>
     </Border>
 
     <Border DockPanel.Dock="Bottom" Padding="8,4" BorderThickness="0,1,0,0" BorderBrush="#33FFFFFF">
-      <Grid>
-        <TextBlock Text="{Binding StatusText}" Opacity="0.7"
-                   IsVisible="{Binding SelectedTab, Converter={x:Static ObjectConverters.IsNull}}" />
-        <TextBlock Text="{Binding SelectedTab.StatusText}" Opacity="0.7"
-                   IsVisible="{Binding SelectedTab, Converter={x:Static ObjectConverters.IsNotNull}}" />
+      <Grid ColumnDefinitions="*,Auto,200,Auto">
+        <Grid Grid.Column="0">
+          <TextBlock Text="{Binding StatusText}" Opacity="0.7"
+                     IsVisible="{Binding SelectedTab, Converter={x:Static ObjectConverters.IsNull}}" />
+          <TextBlock Text="{Binding SelectedTab.StatusText}" Opacity="0.7"
+                     IsVisible="{Binding SelectedTab, Converter={x:Static ObjectConverters.IsNotNull}}" />
+        </Grid>
+        <TextBlock Grid.Column="1" Text="{Binding SelectedTab.OperationText}" Margin="8,0" VerticalAlignment="Center"
+                   IsVisible="{Binding SelectedTab.IsBusy, FallbackValue=False}" />
+        <ProgressBar Grid.Column="2" Maximum="100" VerticalAlignment="Center"
+                     Value="{Binding SelectedTab.ProgressPercent}"
+                     IsIndeterminate="{Binding SelectedTab.ProgressIndeterminate}"
+                     IsVisible="{Binding SelectedTab.IsBusy, FallbackValue=False}" />
+        <Button Grid.Column="3" Content="Cancel" Margin="8,0,0,0" Padding="8,0"
+                Command="{Binding SelectedTab.CancelOperationCommand}"
+                IsVisible="{Binding SelectedTab.IsBusy, FallbackValue=False}" />
       </Grid>
     </Border>
 

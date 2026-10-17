@@ -9,6 +9,9 @@ public sealed class RepoSettings
     public List<string> RecentRepos { get; set; } = new();
     public List<string> OpenTabs { get; set; } = new();
     public string? ActiveTab { get; set; }
+    public bool AutoFetch { get; set; } = true;
+    public int AutoFetchMinutes { get; set; } = 5;
+    public bool PruneOnFetch { get; set; } = true;
 
     public void AddRecent(string path)
     {
