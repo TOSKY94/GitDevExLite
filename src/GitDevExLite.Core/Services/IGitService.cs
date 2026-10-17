@@ -32,8 +32,9 @@ public interface IGitService : IDisposable
     IReadOnlyList<string> GetRemoteNames();
     string? GetRemoteUrl(string? remote = null);
     Task FetchAsync(bool prune, IProgress<GitProgress>? progress, CancellationToken ct, bool background = false);
-    Task PullAsync(PullMode mode, IProgress<GitProgress>? progress, CancellationToken ct);
-    Task PushAsync(IProgress<GitProgress>? progress, CancellationToken ct);
+    Task<GitOpResult> PullAsync(PullMode mode, IProgress<GitProgress>? progress, CancellationToken ct);
+    Task PushAsync(IProgress<GitProgress>? progress, CancellationToken ct, bool forceWithLease = false);
+    Task FetchRefAsync(string refspec, IProgress<GitProgress>? progress, CancellationToken ct);
     void SetUpstream(string branch, string upstream);
 
     void CreateTag(string name, string sha, string? message);

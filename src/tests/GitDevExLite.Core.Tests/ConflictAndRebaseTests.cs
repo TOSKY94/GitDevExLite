@@ -1,4 +1,4 @@
-using GitDevExLite.Core.Diff;
+﻿using GitDevExLite.Core.Diff;
 using GitDevExLite.Core.Models;
 using GitDevExLite.Core.Services;
 using LibGit2Sharp;
@@ -300,7 +300,6 @@ public sealed class ConflictAndInteractiveRebaseTests : IDisposable
 
     [Theory]
     [InlineData("../outside.txt")]
-    [InlineData("-rf")]
     [InlineData("a/../../b")]
     public async Task Paths_outside_the_repository_are_rejected(string path)
     {

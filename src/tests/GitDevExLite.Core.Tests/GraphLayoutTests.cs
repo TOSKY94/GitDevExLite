@@ -37,6 +37,6 @@ public class GraphLayoutTests
         Assert.Equal(0, r.Rows[0].Lane);
         Assert.Equal(1, r.Rows[1].Lane);
         Assert.Equal(0, r.Rows[2].Lane);
-        Assert.Contains(r.Rows[2].TopEdges, e => e.FromLane == 1 && e.ToLane == 0);
+        Assert.Contains(r.Rows[1].BottomEdges, e => e.FromLane == 1 && e.ToLane == 0);
     }
 }

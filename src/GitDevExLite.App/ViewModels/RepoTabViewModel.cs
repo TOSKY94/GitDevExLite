@@ -417,6 +417,8 @@ public partial class RepoTabViewModel : ObservableObject, IDisposable
         Replace(LocalBranches, refs.Where(r => r.Kind == RefKind.LocalBranch).OrderBy(r => r.Name));
         Replace(RemoteBranches, refs.Where(r => r.Kind == RefKind.RemoteBranch).OrderBy(r => r.Name));
         Replace(Tags, refs.Where(r => r.Kind == RefKind.Tag).OrderByDescending(r => r.Name));
+        OnPropertyChanged(nameof(CurrentBranchLabel));
+        OnPropertyChanged(nameof(CurrentBranchSync));
         Replace(Stashes, _git.GetStashes());
         RefsByCommit = refs.GroupBy(r => r.TargetSha).ToDictionary(g => g.Key, g => g.ToList());
         RefreshPullRequestContext();
@@ -562,8 +564,11 @@ public partial class RepoTabViewModel : ObservableObject, IDisposable
         _ = LoadPullRequestDetailAsync(value);
     }
 
+    public bool ShowCommitMode => !ShowWorkingDirectory && !HasPullRequestDetail;
+
     partial void OnPullRequestDetailChanged(PullRequestDetail? value)
     {
+        OnPropertyChanged(nameof(ShowCommitMode));
         OnPropertyChanged(nameof(HasPullRequestDetail));
         OnPropertyChanged(nameof(PullRequestDetailTitle));
         OnPropertyChanged(nameof(PullRequestDetailSummary));
@@ -745,6 +750,7 @@ public partial class RepoTabViewModel : ObservableObject, IDisposable
 
     partial void OnShowWorkingDirectoryChanged(bool value)
     {
+        OnPropertyChanged(nameof(ShowCommitMode));
         ActiveDiff = null;
         ActiveConflict = null;
         OnPropertyChanged(nameof(CanCommentSelectedPullRequestInline));
@@ -1063,6 +1069,9 @@ public partial class RepoTabViewModel : ObservableObject, IDisposable
     // ---- merge, rebase, cherry-pick, revert, reset ---------------------------
 
     private string CurrentBranchName => LocalBranches.FirstOrDefault(b => b.IsHead)?.Name ?? "HEAD";
+
+    public string CurrentBranchLabel => LocalBranches.FirstOrDefault(b => b.IsHead)?.Name ?? "HEAD (detached)";
+    public string CurrentBranchSync => LocalBranches.FirstOrDefault(b => b.IsHead)?.AheadBehindText ?? "";
 
     private void AddHistoryActions(List<ContextAction> actions, string sha, List<RefInfo>? refs)
     {
@@ -1398,10 +1407,19 @@ public partial class RepoTabViewModel : ObservableObject, IDisposable
     private Task PullFastForward() => PullAsync(PullMode.FastForwardOnly);
 
     private Task PullAsync(PullMode mode) =>
-        RunRemoteAsync($"Pull ({mode})", (p, ct) => _git.PullAsync(mode, p, ct), includeStatus: true);
+        RunOperationAsync($"Pull ({mode})", (p, ct) => _git.PullAsync(mode, p, ct));
 
     [RelayCommand(CanExecute = nameof(CanRemote))]
     private Task Push() => RunRemoteAsync("Push", (p, ct) => _git.PushAsync(p, ct), includeStatus: false);
+
+    [RelayCommand(CanExecute = nameof(CanRemote))]
+    private async Task ForcePush()
+    {
+        if (!await _dialogs.ConfirmAsync("Force push",
+                "Force push (with lease) rewrites the remote branch. It is refused if someone else pushed in the meantime. Continue?"))
+            return;
+        await RunRemoteAsync("Force push", (p, ct) => _git.PushAsync(p, ct, forceWithLease: true), includeStatus: false);
+    }
 
     [RelayCommand]
     private void CancelOperation() => _cts?.Cancel();
