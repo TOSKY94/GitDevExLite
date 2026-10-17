@@ -1,0 +1,7 @@
+<Solution>
+    <Project Path="GitDevExLite.App/GitDevExLite.App.csproj" />
+    <Project Path="GitDevExLite.Core/GitDevExLite.Core.csproj" />
+  <Folder Name="/tests/">
+    <Project Path="tests/GitDevExLite.Core.Tests/GitDevExLite.Core.Tests.csproj" />
+  </Folder>
+</Solution>

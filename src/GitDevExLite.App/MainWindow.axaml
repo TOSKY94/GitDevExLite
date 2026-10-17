@@ -1,0 +1,86 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:GitDevExLite.App.ViewModels"
+        xmlns:ctl="using:GitDevExLite.App.Controls"
+        xmlns:m="using:GitDevExLite.Core.Models"
+        x:Class="GitDevExLite.App.MainWindow"
+        x:DataType="vm:MainViewModel"
+        Title="{Binding Title}" Width="1280" Height="800">
+  <DockPanel>
+    <Border DockPanel.Dock="Top" Padding="8" BorderThickness="0,0,0,1" BorderBrush="#33FFFFFF">
+      <StackPanel Orientation="Horizontal" Spacing="8">
+        <Button Content="Open..." Click="OnOpenClick" />
+        <Button Content="Refresh" Command="{Binding RefreshCommand}" />
+        <Button Content="Checkout" Command="{Binding CheckoutCommand}" />
+      </StackPanel>
+    </Border>
+
+    <Border DockPanel.Dock="Bottom" Padding="8,4" BorderThickness="0,1,0,0" BorderBrush="#33FFFFFF">
+      <TextBlock Text="{Binding StatusText}" Opacity="0.7" />
+    </Border>
+
+    <Grid ColumnDefinitions="240,Auto,*,Auto,320">
+      <ScrollViewer Grid.Column="0">
+        <StackPanel Margin="8" Spacing="4">
+          <Expander Header="Local" IsExpanded="True" HorizontalAlignment="Stretch">
+            <ListBox ItemsSource="{Binding LocalBranches}" SelectedItem="{Binding SelectedBranch}">
+              <ListBox.ItemTemplate>
+                <DataTemplate x:DataType="m:RefInfo">
+                  <TextBlock Text="{Binding Name}" />
+                </DataTemplate>
+              </ListBox.ItemTemplate>
+            </ListBox>
+          </Expander>
+          <Expander Header="Remote" HorizontalAlignment="Stretch">
+            <ListBox ItemsSource="{Binding RemoteBranches}" SelectedItem="{Binding SelectedBranch}">
+              <ListBox.ItemTemplate>
+                <DataTemplate x:DataType="m:RefInfo">
+                  <TextBlock Text="{Binding Name}" />
+                </DataTemplate>
+              </ListBox.ItemTemplate>
+            </ListBox>
+          </Expander>
+          <Expander Header="Tags" HorizontalAlignment="Stretch">
+            <ListBox ItemsSource="{Binding Tags}">
+              <ListBox.ItemTemplate>
+                <DataTemplate x:DataType="m:RefInfo">
+                  <TextBlock Text="{Binding Name}" />
+                </DataTemplate>
+              </ListBox.ItemTemplate>
+            </ListBox>
+          </Expander>
+          <Expander Header="Stashes" HorizontalAlignment="Stretch">
+            <ListBox ItemsSource="{Binding Stashes}">
+              <ListBox.ItemTemplate>
+                <DataTemplate x:DataType="m:StashInfo">
+                  <TextBlock Text="{Binding Message}" />
+                </DataTemplate>
+              </ListBox.ItemTemplate>
+            </ListBox>
+          </Expander>
+        </StackPanel>
+      </ScrollViewer>
+
+      <GridSplitter Grid.Column="1" Width="4" />
+
+      <ScrollViewer Grid.Column="2" HorizontalScrollBarVisibility="Auto">
+        <ctl:CommitGraphControl Graph="{Binding Graph}"
+                                RefsByCommit="{Binding RefsByCommit}"
+                                SelectedRow="{Binding SelectedRow, Mode=TwoWay}" />
+      </ScrollViewer>
+
+      <GridSplitter Grid.Column="3" Width="4" />
+
+      <ScrollViewer Grid.Column="4">
+        <StackPanel Margin="12" Spacing="6"
+                    IsVisible="{Binding SelectedRow, Converter={x:Static ObjectConverters.IsNotNull}}">
+          <TextBlock Text="{Binding SelectedRow.Commit.Summary}" FontSize="16" FontWeight="SemiBold" TextWrapping="Wrap" />
+          <TextBlock Text="{Binding SelectedRow.Commit.Sha}" FontFamily="Consolas,Menlo,monospace" Opacity="0.7" TextWrapping="Wrap" />
+          <TextBlock Text="{Binding SelectedRow.Commit.AuthorName}" />
+          <TextBlock Text="{Binding SelectedRow.Commit.When}" Opacity="0.7" />
+          <TextBlock Text="{Binding SelectedRow.Commit.Message}" TextWrapping="Wrap" Margin="0,8,0,0" />
+        </StackPanel>
+      </ScrollViewer>
+    </Grid>
+  </DockPanel>
+</Window>
