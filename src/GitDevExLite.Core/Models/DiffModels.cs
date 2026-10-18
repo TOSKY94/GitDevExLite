@@ -1,6 +1,6 @@
 namespace GitDevExLite.Core.Models;
 
-public sealed record ChangedFile(string Path, string? OldPath, string Status);
+public sealed record ChangedFile(string Path, string? OldPath, string Status, string? Patch = null);
 
 public enum DiffLineKind { Context, Added, Removed, NoNewlineMarker }
 

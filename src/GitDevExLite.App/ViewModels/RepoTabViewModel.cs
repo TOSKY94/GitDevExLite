@@ -339,25 +339,42 @@ public partial class RepoTabViewModel : ObservableObject, IDisposable
     [RelayCommand(CanExecute = nameof(CanMergeSelectedPullRequest))]
     private async Task MergePullRequest()
     {
-        if (HostedRepository is null || SelectedPullRequest is null) return;
+        if (HostedRepository is not { } repository || SelectedPullRequest is not { } pullRequest) return;
+
+        var strategy = await _dialogs.ChoosePullRequestMergeStrategyAsync(ProviderCapabilities.SupportedMergeStrategies);
+        if (strategy is null) return;
+        if (!ProviderCapabilities.SupportedMergeStrategies.Contains(strategy.Value))
+        {
+            StatusText = $"The selected provider does not support {strategy.Value}.";
+            return;
+        }
 
         var confirmed = await _dialogs.ConfirmAsync(
             "Merge pull request",
-            $"Merge PR #{SelectedPullRequest.Number} '{SelectedPullRequest.Title}' as a squash commit?");
+            $"Merge PR #{pullRequest.Number} '{pullRequest.Title}' using {strategy.Value}?");
         if (!confirmed) return;
 
         try
         {
             IsBusy = true;
             await _pullRequests.MergeAsync(
-                HostedRepository,
-                SelectedPullRequest.Id,
-                new PullRequestMergeRequest(PullRequestMergeStrategy.Squash, DeleteSourceBranch: false),
+                repository,
+                pullRequest.Id,
+                new PullRequestMergeRequest(strategy.Value, DeleteSourceBranch: false),
                 CancellationToken.None);
             await RefreshPullRequestsAsync();
-            if (SelectedPullRequest is { } selected)
-                await LoadPullRequestDetailAsync(selected);
-            StatusText = $"Merged PR #{SelectedPullRequest.Number}.";
+            var refreshedPullRequest = PullRequests.FirstOrDefault(pr => pr.Id == pullRequest.Id);
+            if (refreshedPullRequest is not null)
+            {
+                SelectedPullRequest = refreshedPullRequest;
+                await LoadPullRequestDetailAsync(refreshedPullRequest);
+            }
+            else
+            {
+                SelectedPullRequest = null;
+                ClearPullRequestDetail();
+            }
+            StatusText = $"Merged PR #{pullRequest.Number} using {strategy.Value}.";
         }
         catch (Exception ex)
         {
@@ -557,6 +574,10 @@ public partial class RepoTabViewModel : ObservableObject, IDisposable
         SelectedStash = null;
         ShowWorkingDirectory = false;
         _detailSha = null;
+        PullRequestDetail = null;
+        PullRequestCommits.Clear();
+        PullRequestStatusChecks.Clear();
+        PullRequestThreads.Clear();
         DetailHeading = $"PR #{value.Number}: {value.Title}";
         CommitFiles.Clear();
         ActiveDiff = null;
@@ -639,6 +660,7 @@ public partial class RepoTabViewModel : ObservableObject, IDisposable
         {
             IsBusy = true;
             var detail = await _pullRequests.GetDetailAsync(HostedRepository, selected.Id, CancellationToken.None);
+            if (SelectedPullRequest?.Id != selected.Id) return;
             PullRequestDetail = detail;
             Replace(CommitFiles, detail.Files);
             Replace(PullRequestCommits, detail.Commits);
@@ -648,8 +670,11 @@ public partial class RepoTabViewModel : ObservableObject, IDisposable
         }
         catch (Exception ex)
         {
-            ClearPullRequestDetail();
-            StatusText = ex.Message;
+            if (SelectedPullRequest?.Id == selected.Id)
+            {
+                ClearPullRequestDetail();
+                StatusText = ex.Message;
+            }
         }
         finally
         {
@@ -733,7 +758,24 @@ public partial class RepoTabViewModel : ObservableObject, IDisposable
         OnPropertyChanged(nameof(HasCurrentFile));
         OnPropertyChanged(nameof(CanCommentSelectedPullRequestInline));
         if (ShowWorkingDirectory) return;
-        if (value is null || _detailSha is null) { ActiveDiff = null; return; }
+        if (value is null) { ActiveDiff = null; return; }
+        if (PullRequestDetail is not null)
+        {
+            if (string.IsNullOrWhiteSpace(value.Patch))
+            {
+                ActiveDiff = null;
+                DiffEditable = false;
+                DiffStaged = false;
+                StatusText = $"A diff is unavailable for '{value.Path}'.";
+                return;
+            }
+
+            ActiveDiff = PatchParser.Parse(value.Path, value.Patch, value.Status == "A", value.Status == "D");
+            DiffEditable = false;
+            DiffStaged = false;
+            return;
+        }
+        if (_detailSha is null) { ActiveDiff = null; return; }
         try
         {
             ActiveDiff = _git.GetCommitDiff(_detailSha, value.Path);
@@ -945,7 +987,12 @@ public partial class RepoTabViewModel : ObservableObject, IDisposable
         if (selectedLines.Count == 0)
             return null;
 
-        var side = selectedLines.Any(line => line.Kind == DiffLineKind.Removed)
+        var hasAdded = selectedLines.Any(line => line.Kind == DiffLineKind.Added);
+        var hasRemoved = selectedLines.Any(line => line.Kind == DiffLineKind.Removed);
+        if (hasAdded && hasRemoved)
+            return null;
+
+        var side = hasRemoved
             ? PullRequestCommentSide.Left
             : PullRequestCommentSide.Right;
         var lineNumbers = selectedLines
@@ -955,7 +1002,7 @@ public partial class RepoTabViewModel : ObservableObject, IDisposable
             .Distinct()
             .OrderBy(lineNumber => lineNumber)
             .ToArray();
-        if (lineNumbers.Length == 0)
+        if (lineNumbers.Length == 0 || lineNumbers.Zip(lineNumbers.Skip(1)).Any(pair => pair.Second != pair.First + 1))
             return null;
 
         return new PullRequestCommentAnchor(
@@ -1442,7 +1489,7 @@ public partial class RepoTabViewModel : ObservableObject, IDisposable
 
         try
         {
-            await AuthRetry.RunAsync(_dialogs, () => _git.GetRemoteUrl(), () => operation(progress, ct), ct);
+            await AuthRetry.RunAsync(_dialogs, () => _git.GetRemoteUrl(), () => operation(progress, ct), ct, _git.RepositoryPath);
             AutoFetchPaused = false;
             RefreshCore(keepSelection: true, includeStatus);
             StatusText = $"{name} complete.";

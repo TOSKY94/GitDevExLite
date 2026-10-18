@@ -290,7 +290,7 @@
                           ToolTip.Tip="Stage file"
                           Command="{Binding $parent[UserControl].((vm:RepoTabViewModel)DataContext).StageFileCommand}"
                           CommandParameter="{Binding}" />
-                  <TextBlock Text="{Binding Status}" Opacity="0.6" Width="64" DockPanel.Dock="Left" />
+                  <TextBlock Text="{Binding Status}" Opacity="0.6" Width="64" Margin="0,0,8,0" DockPanel.Dock="Left" />
                   <TextBlock Text="{Binding Path}" TextTrimming="CharacterEllipsis" />
                 </DockPanel>
               </DataTemplate>
@@ -309,7 +309,7 @@
                           ToolTip.Tip="Unstage file"
                           Command="{Binding $parent[UserControl].((vm:RepoTabViewModel)DataContext).UnstageFileCommand}"
                           CommandParameter="{Binding}" />
-                  <TextBlock Text="{Binding Status}" Opacity="0.6" Width="64" DockPanel.Dock="Left" />
+                  <TextBlock Text="{Binding Status}" Opacity="0.6" Width="64" Margin="0,0,8,0" DockPanel.Dock="Left" />
                   <TextBlock Text="{Binding Path}" TextTrimming="CharacterEllipsis" />
                 </DockPanel>
               </DataTemplate>

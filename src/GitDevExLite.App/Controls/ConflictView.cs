@@ -46,17 +46,11 @@ public sealed class ConflictView : UserControl
         _highlighters[1] = _theirs.InstallTextMate(Registry.Value);
         _highlighters[2] = _result.InstallTextMate(Registry.Value);
 
-        _blockButtons = Row(_previous, _next, _acceptOurs, _acceptTheirs, _acceptBoth, _reset);
-        var toolbar = new DockPanel { Margin = new Thickness(6, 4), LastChildFill = true };
-        var right = Row(_useOurs, _useTheirs, _resolved);
-        DockPanel.SetDock(right, Dock.Right);
-        toolbar.Children.Add(right);
-        toolbar.Children.Add(new StackPanel
-        {
-            Orientation = Orientation.Horizontal,
-            Spacing = 12,
-            Children = { _title, _summary, _blockButtons }
-        });
+        _blockButtons = Wrap(_previous, _next, _acceptOurs, _acceptTheirs, _acceptBoth, _reset);
+        var toolbar = new StackPanel { Margin = new Thickness(6, 4), Spacing = 3 };
+        toolbar.Children.Add(Wrap(_title, _summary));
+        toolbar.Children.Add(_blockButtons);
+        toolbar.Children.Add(Wrap(_useOurs, _useTheirs, _resolved));
 
         var oursPane = Pane(_oursHeader, _ours);
         var theirsPane = Pane(_theirsHeader, _theirs);
@@ -104,10 +98,14 @@ public sealed class ConflictView : UserControl
         return editor;
     }
 
-    private static StackPanel Row(params Control[] children)
+    private static WrapPanel Wrap(params Control[] children)
     {
-        var panel = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
-        foreach (var c in children) panel.Children.Add(c);
+        var panel = new WrapPanel { Orientation = Orientation.Horizontal };
+        foreach (var child in children)
+        {
+            child.Margin = new Thickness(0, 0, 6, 2);
+            panel.Children.Add(child);
+        }
         return panel;
     }
 

@@ -818,7 +818,7 @@ public sealed class PullRequestService : IPullRequestService
             "removed" => "D",
             "renamed" => "R",
             _ => "M"
-        });
+        }, file.Patch);
 
     private static IReadOnlyList<PullRequestThread> BuildThreads(IReadOnlyList<GitHubReviewDto> reviews, IReadOnlyList<GitHubReviewCommentDto> comments)
     {
@@ -869,7 +869,7 @@ public sealed class PullRequestService : IPullRequestService
     private sealed record GitHubCommitDto(string Sha, GitHubCommitInnerDto? Commit, GitHubUserDto? Author);
     private sealed record GitHubCommitInnerDto(string? Message, GitHubCommitAuthorDto? Author);
     private sealed record GitHubCommitAuthorDto(string? Name, DateTimeOffset? Date);
-    private sealed record GitHubFileDto(string Filename, string? PreviousFilename, string? Status);
+    private sealed record GitHubFileDto(string Filename, string? PreviousFilename, string? Status, string? Patch);
     private sealed record GitHubReviewDto(long Id, string? Body, GitHubUserDto? User, DateTimeOffset CreatedAt, DateTimeOffset? SubmittedAt);
     private sealed record GitHubReviewCommentDto(long Id, string? Body, string? Path, int? Line, int? OriginalLine, int? StartLine, string? Side, long? InReplyToId, GitHubUserDto? User, DateTimeOffset CreatedAt);
     private sealed record GitHubCompareDto(IReadOnlyList<GitHubCompareCommitDto>? Commits);

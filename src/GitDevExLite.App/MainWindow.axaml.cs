@@ -5,6 +5,7 @@ using Avalonia.Interactivity;
 using Avalonia.Layout;
 using Avalonia.Platform.Storage;
 using GitDevExLite.App.ViewModels;
+using GitDevExLite.Core.Models;
 using GitDevExLite.Core.Services;
 
 namespace GitDevExLite.App;
@@ -106,6 +107,53 @@ public partial class MainWindow : Window, IDialogService
         yes.Click += (_, _) => dialog.Close(true);
         no.Click += (_, _) => dialog.Close(false);
         return await dialog.ShowDialog<bool>(this);
+    }
+
+    public async Task<PullRequestMergeStrategy?> ChoosePullRequestMergeStrategyAsync(
+        IReadOnlyList<PullRequestMergeStrategy> supportedStrategies)
+    {
+        var options = supportedStrategies.Select(strategy => new ComboBoxItem
+        {
+            Content = strategy switch
+            {
+                PullRequestMergeStrategy.MergeCommit => "Merge commit",
+                PullRequestMergeStrategy.Squash => "Squash",
+                PullRequestMergeStrategy.Rebase => "Rebase",
+                _ => strategy.ToString()
+            },
+            Tag = strategy
+        }).ToArray();
+        if (options.Length == 0) return null;
+
+        var choice = new ComboBox
+        {
+            ItemsSource = options,
+            SelectedIndex = Math.Max(0, Array.FindIndex(options, option =>
+                (PullRequestMergeStrategy)option.Tag! == PullRequestMergeStrategy.Squash)),
+            MinWidth = 260
+        };
+        var ok = new Button { Content = "Continue", IsDefault = true };
+        var cancel = new Button { Content = "Cancel", IsCancel = true };
+        var dialog = Dialog("Merge strategy", new StackPanel
+        {
+            Spacing = 10,
+            Margin = new Avalonia.Thickness(16),
+            Children =
+            {
+                new TextBlock { Text = "Choose how to merge this pull request." },
+                choice,
+                new StackPanel
+                {
+                    Orientation = Orientation.Horizontal,
+                    HorizontalAlignment = HorizontalAlignment.Right,
+                    Spacing = 8,
+                    Children = { ok, cancel }
+                }
+            }
+        });
+        ok.Click += (_, _) => dialog.Close(choice.SelectedItem is ComboBoxItem { Tag: PullRequestMergeStrategy strategy } ? strategy : null);
+        cancel.Click += (_, _) => dialog.Close(null);
+        return await dialog.ShowDialog<PullRequestMergeStrategy?>(this);
     }
 
     public async Task CopyTextAsync(string text)

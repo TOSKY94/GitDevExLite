@@ -38,6 +38,7 @@ public interface IDialogService
 {
     Task<string?> PromptAsync(string title, string label, string initial = "");
     Task<bool> ConfirmAsync(string title, string message);
+    Task<PullRequestMergeStrategy?> ChoosePullRequestMergeStrategyAsync(IReadOnlyList<PullRequestMergeStrategy> supportedStrategies);
     Task CopyTextAsync(string text);
     Task<CredentialChoice?> PromptCredentialsAsync(CredentialRequest request);
 
@@ -62,7 +63,7 @@ public sealed partial class RemoteOptions : CommunityToolkit.Mvvm.ComponentModel
 public static class AuthRetry
 {
     /// <summary>Runs <paramref name="operation"/>; on an auth failure asks for credentials once and retries.</summary>
-    public static async Task RunAsync(IDialogService dialogs, Func<string?> remoteUrl, Func<Task> operation, CancellationToken ct)
+    public static async Task RunAsync(IDialogService dialogs, Func<string?> remoteUrl, Func<Task> operation, CancellationToken ct, string? repositoryPath = null)
     {
         try
         {
@@ -76,6 +77,8 @@ public static class AuthRetry
             var choice = await dialogs.PromptCredentialsAsync(request);
             if (choice is null || request.IsSsh || url is null) throw;
 
+            if (repositoryPath is not null)
+                await GitCredentials.EnableHttpPathAsync(repositoryPath, url, ct);
             if (choice.UseGcm) await GitCredentials.SignInAsync(url, ct);
             else await GitCredentials.StoreTokenAsync(url, choice.Username ?? "", choice.Token ?? "", ct);
             await operation();
