@@ -377,11 +377,25 @@ public sealed class PullRequestService : IPullRequestService
         var iterations = await SendAzureDevOpsAsync<AzureDevOpsIterationListDto>(repository, session, HttpMethod.Get, AzureDevOpsRepositoryPath(repository, $"pullRequests/{pullRequestId}/iterations?api-version=7.1"), ct)
             ?? new AzureDevOpsIterationListDto(Array.Empty<AzureDevOpsIterationDto>());
         var latestIterationId = iterations.Value.OrderByDescending(i => i.Id).FirstOrDefault()?.Id;
-        var files = latestIterationId is null
-            ? Array.Empty<ChangedFile>()
+        var changes = latestIterationId is null
+            ? Array.Empty<AzureDevOpsChangeDto>()
             : (await SendAzureDevOpsAsync<AzureDevOpsChangeListDto>(repository, session, HttpMethod.Get, AzureDevOpsRepositoryPath(repository, $"pullRequests/{pullRequestId}/iterations/{latestIterationId}/changes?api-version=7.1"), ct)
-                ?? new AzureDevOpsChangeListDto(Array.Empty<AzureDevOpsChangeDto>())).ChangeEntries
-                ?.Select(ToAzureDevOpsChangedFile).ToArray() ?? Array.Empty<ChangedFile>();
+                ?? new AzureDevOpsChangeListDto(Array.Empty<AzureDevOpsChangeDto>())).ChangeEntries?.ToArray()
+                ?? Array.Empty<AzureDevOpsChangeDto>();
+        var files = new List<ChangedFile>(changes.Length);
+        foreach (var change in changes)
+        {
+            var file = ToAzureDevOpsChangedFile(change);
+            var isAdded = string.Equals(change.ChangeType, "add", StringComparison.OrdinalIgnoreCase);
+            var isDeleted = string.Equals(change.ChangeType, "delete", StringComparison.OrdinalIgnoreCase);
+            var oldContent = isAdded || string.IsNullOrWhiteSpace(detail.LastMergeTargetCommit?.CommitId)
+                ? null
+                : await GetAzureDevOpsFileContentAsync(repository, session, file.Path, detail.LastMergeTargetCommit.CommitId, ct);
+            var newContent = isDeleted || string.IsNullOrWhiteSpace(detail.LastMergeSourceCommit?.CommitId)
+                ? null
+                : await GetAzureDevOpsFileContentAsync(repository, session, file.Path, detail.LastMergeSourceCommit.CommitId, ct);
+            files.Add(file with { Patch = CreateUnifiedPatch(file.Path, oldContent, newContent) });
+        }
         var statuses = await SendAzureDevOpsAsync<AzureDevOpsStatusListDto>(repository, session, HttpMethod.Get, AzureDevOpsRepositoryPath(repository, $"pullRequests/{pullRequestId}/statuses?api-version=7.1"), ct)
             ?? new AzureDevOpsStatusListDto(Array.Empty<AzureDevOpsStatusDto>());
 
@@ -598,6 +612,48 @@ public sealed class PullRequestService : IPullRequestService
             return default;
 
         return await response.Content.ReadFromJsonAsync<T>(cancellationToken: ct);
+    }
+
+    private async Task<string?> GetAzureDevOpsFileContentAsync(
+        HostedRepositoryId repository,
+        ProviderSession session,
+        string path,
+        string commitId,
+        CancellationToken ct)
+    {
+        var query = $"items?path={Uri.EscapeDataString(path)}&includeContent=true&versionDescriptor.version={Uri.EscapeDataString(commitId)}&versionDescriptor.versionType=commit&api-version=7.1";
+        var item = await SendAzureDevOpsAsync<AzureDevOpsFileContentDto>(
+            repository,
+            session,
+            HttpMethod.Get,
+            AzureDevOpsRepositoryPath(repository, query),
+            ct,
+            acceptNotFound: true);
+        return item?.Content;
+    }
+
+    private static string? CreateUnifiedPatch(string path, string? oldContent, string? newContent)
+    {
+        if (oldContent is null && newContent is null) return null;
+        if (string.Equals(oldContent, newContent, StringComparison.Ordinal)) return string.Empty;
+
+        var oldLines = SplitFileLines(oldContent);
+        var newLines = SplitFileLines(newContent);
+        var builder = new StringBuilder();
+        builder.AppendLine($"--- a/{path.TrimStart('/')}");
+        builder.AppendLine($"+++ b/{path.TrimStart('/')}");
+        builder.Append("@@ -").Append(oldLines.Length == 0 ? "0,0" : $"1,{oldLines.Length}")
+            .Append(" +").Append(newLines.Length == 0 ? "0,0" : $"1,{newLines.Length}").AppendLine(" @@");
+        foreach (var line in oldLines) builder.Append('-').AppendLine(line);
+        foreach (var line in newLines) builder.Append('+').AppendLine(line);
+        return builder.ToString();
+    }
+
+    private static string[] SplitFileLines(string? content)
+    {
+        if (string.IsNullOrEmpty(content)) return Array.Empty<string>();
+        var lines = content.Replace("\r\n", "\n", StringComparison.Ordinal).Replace('\r', '\n').Split('\n');
+        return lines.Length > 0 && lines[^1].Length == 0 ? lines[..^1] : lines;
     }
 
     private static AuthenticationHeaderValue CreateAzureDevOpsAuth(string token)
@@ -886,7 +942,9 @@ public sealed class PullRequestService : IPullRequestService
     private sealed record GitHubCheckOutputDto(string? Title);
 
     private sealed record AzureDevOpsPullRequestListDto(IReadOnlyList<AzureDevOpsPullRequestDto> Value);
-    private sealed record AzureDevOpsPullRequestDto(int PullRequestId, string? Title, string? Description, string? Status, bool IsDraft, DateTimeOffset CreationDate, string? Url, string? SourceRefName, string? TargetRefName, AzureDevOpsIdentityDto? CreatedBy, IReadOnlyList<AzureDevOpsReviewerDto>? Reviewers);
+    private sealed record AzureDevOpsPullRequestDto(int PullRequestId, string? Title, string? Description, string? Status, bool IsDraft, DateTimeOffset CreationDate, string? Url, string? SourceRefName, string? TargetRefName, AzureDevOpsIdentityDto? CreatedBy, IReadOnlyList<AzureDevOpsReviewerDto>? Reviewers, AzureDevOpsCommitReferenceDto? LastMergeSourceCommit, AzureDevOpsCommitReferenceDto? LastMergeTargetCommit);
+    private sealed record AzureDevOpsCommitReferenceDto(string? CommitId);
+    private sealed record AzureDevOpsFileContentDto(string? Content);
     private sealed record AzureDevOpsIdentityDto(string? Id, string? DisplayName, string? UniqueName);
     private sealed record AzureDevOpsReviewerDto(string? Id, int Vote);
     private sealed record AzureDevOpsPullRequestCommitListDto(IReadOnlyList<AzureDevOpsPullRequestCommitDto> Value);
