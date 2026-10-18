@@ -205,6 +205,13 @@ public partial class MainWindow : Window, IDialogService
         var token = new RadioButton { Content = "Use a personal access token", GroupName = "auth", IsChecked = !canUseGcm };
         var user = new TextBox { Watermark = "Username", Text = "PAT" };
         var secret = new TextBox { Watermark = "Token", PasswordChar = '\u2022', MinWidth = 320 };
+        var isAzureDevOps = GitCredentials.IsAzureDevOpsUrl(request.Url);
+        var organization = new TextBox
+        {
+            Watermark = "Organization name",
+            Text = GitCredentials.GetAzureDevOpsOrganization(request.Url) ?? "",
+            MinWidth = 320
+        };
 
         void Sync()
         {
@@ -217,6 +224,11 @@ public partial class MainWindow : Window, IDialogService
 
         panel.Children.Add(gcm);
         panel.Children.Add(token);
+        if (isAzureDevOps)
+        {
+            panel.Children.Add(new TextBlock { Text = "Azure DevOps organization" });
+            panel.Children.Add(organization);
+        }
         panel.Children.Add(user);
         panel.Children.Add(secret);
         buttons.Children.Add(ok);
@@ -226,9 +238,13 @@ public partial class MainWindow : Window, IDialogService
         var dialog = Dialog("Authentication required", panel);
         ok.Click += (_, _) =>
         {
-            if (gcm.IsChecked == true) { dialog.Close(new CredentialChoice(true, null, null)); return; }
+            if (gcm.IsChecked == true)
+            {
+                dialog.Close(new CredentialChoice(true, null, null, isAzureDevOps ? organization.Text?.Trim() : null));
+                return;
+            }
             if (string.IsNullOrWhiteSpace(user.Text) || string.IsNullOrEmpty(secret.Text)) return;
-            dialog.Close(new CredentialChoice(false, user.Text.Trim(), secret.Text));
+            dialog.Close(new CredentialChoice(false, user.Text.Trim(), secret.Text, isAzureDevOps ? organization.Text?.Trim() : null));
         };
         cancel.Click += (_, _) => dialog.Close(null);
         return await dialog.ShowDialog<CredentialChoice?>(this);

@@ -13,6 +13,7 @@ public sealed class PullRequestService : IPullRequestService
     private readonly HttpClient _githubHttp;
     private readonly HttpClient _azureDevOpsHttp;
     private readonly Func<string, string, CancellationToken, Task<string?>> _tokenProvider;
+    private readonly Func<string, string, string?, CancellationToken, Task<string?>> _azureDevOpsTokenProvider;
 
     public PullRequestService(
         IProviderSessionStore? sessions = null,
@@ -25,9 +26,12 @@ public sealed class PullRequestService : IPullRequestService
         _githubHttp = http ?? GitHubApiClient.CreateClient();
         _azureDevOpsHttp = azureDevOpsHttp ?? AzureDevOpsApiClient.CreateClient();
         _tokenProvider = tokenProvider ?? ProviderCredentialStore.TryGetTokenAsync;
+        _azureDevOpsTokenProvider = tokenProvider is null
+            ? ProviderCredentialStore.TryGetTokenAsync
+            : (protocol, host, _, cancellationToken) => tokenProvider(protocol, host, cancellationToken);
         _auth = auth ?? new CompositePullRequestAuthService(
             new GitHubPullRequestAuthService(_sessions, _githubHttp, _tokenProvider),
-            new AzureDevOpsPullRequestAuthService(_sessions, _azureDevOpsHttp, _tokenProvider));
+            new AzureDevOpsPullRequestAuthService(_sessions, _azureDevOpsHttp, tokenProviderWithUsername: _azureDevOpsTokenProvider));
     }
 
     public HostedRepositoryId? ResolveRepository(IGitService git)
@@ -376,7 +380,8 @@ public sealed class PullRequestService : IPullRequestService
         var files = latestIterationId is null
             ? Array.Empty<ChangedFile>()
             : (await SendAzureDevOpsAsync<AzureDevOpsChangeListDto>(repository, session, HttpMethod.Get, AzureDevOpsRepositoryPath(repository, $"pullRequests/{pullRequestId}/iterations/{latestIterationId}/changes?api-version=7.1"), ct)
-                ?? new AzureDevOpsChangeListDto(Array.Empty<AzureDevOpsChangeDto>())).Changes.Select(ToAzureDevOpsChangedFile).ToArray();
+                ?? new AzureDevOpsChangeListDto(Array.Empty<AzureDevOpsChangeDto>())).ChangeEntries
+                ?.Select(ToAzureDevOpsChangedFile).ToArray() ?? Array.Empty<ChangedFile>();
         var statuses = await SendAzureDevOpsAsync<AzureDevOpsStatusListDto>(repository, session, HttpMethod.Get, AzureDevOpsRepositoryPath(repository, $"pullRequests/{pullRequestId}/statuses?api-version=7.1"), ct)
             ?? new AzureDevOpsStatusListDto(Array.Empty<AzureDevOpsStatusDto>());
 
@@ -571,7 +576,7 @@ public sealed class PullRequestService : IPullRequestService
         object? body = null,
         bool acceptNotFound = false)
     {
-        var token = await _tokenProvider("https", repository.Host, ct);
+        var token = await _azureDevOpsTokenProvider("https", repository.Host, repository.Owner, ct);
         if (string.IsNullOrWhiteSpace(token))
             throw new InvalidOperationException("No Azure DevOps credential was found for this host. Sign in again.");
 
@@ -894,7 +899,7 @@ public sealed class PullRequestService : IPullRequestService
     private sealed record AzureDevOpsCommentDto(int Id, string? Content, DateTimeOffset? PublishedDate, AzureDevOpsIdentityDto? Author);
     private sealed record AzureDevOpsIterationListDto(IReadOnlyList<AzureDevOpsIterationDto> Value);
     private sealed record AzureDevOpsIterationDto(int Id);
-    private sealed record AzureDevOpsChangeListDto(IReadOnlyList<AzureDevOpsChangeDto> Changes);
+    private sealed record AzureDevOpsChangeListDto(IReadOnlyList<AzureDevOpsChangeDto>? ChangeEntries);
     private sealed record AzureDevOpsChangeDto(string? ChangeType, AzureDevOpsGitItemDto? Item);
     private sealed record AzureDevOpsGitItemDto(string? Path);
     private sealed record AzureDevOpsStatusListDto(IReadOnlyList<AzureDevOpsStatusDto> Value);

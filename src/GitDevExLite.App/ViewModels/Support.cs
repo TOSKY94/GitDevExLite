@@ -30,7 +30,7 @@ public sealed record ContextAction(string Header, Func<Task> Execute);
 public sealed record CredentialRequest(string? Url, string Message, bool IsSsh, bool GcmAvailable);
 
 /// <summary>UseGcm triggers an interactive Git Credential Manager sign-in; otherwise Username/Token are stored.</summary>
-public sealed record CredentialChoice(bool UseGcm, string? Username, string? Token);
+public sealed record CredentialChoice(bool UseGcm, string? Username, string? Token, string? Organization = null);
 
 public delegate Task CloneRunner(string url, string destination, IProgress<GitProgress> progress, CancellationToken ct);
 
@@ -77,10 +77,18 @@ public static class AuthRetry
             var choice = await dialogs.PromptCredentialsAsync(request);
             if (choice is null || request.IsSsh || url is null) throw;
 
+            var azureOrganization = string.IsNullOrWhiteSpace(choice.Organization)
+                ? GitCredentials.GetAzureDevOpsOrganization(url)
+                : choice.Organization.Trim();
+            if (GitCredentials.IsAzureDevOpsUrl(url) &&
+                GitCredentials.RequiresAzureDevOpsOrganization(ex.Message) &&
+                string.IsNullOrWhiteSpace(azureOrganization))
+                throw new InvalidOperationException("Enter the Azure DevOps organization name to continue.");
+
             if (repositoryPath is not null)
-                await GitCredentials.EnableHttpPathAsync(repositoryPath, url, ct);
-            if (choice.UseGcm) await GitCredentials.SignInAsync(url, ct);
-            else await GitCredentials.StoreTokenAsync(url, choice.Username ?? "", choice.Token ?? "", ct);
+                await GitCredentials.EnableHttpPathAsync(repositoryPath, url, ct, azureOrganization);
+            if (choice.UseGcm) await GitCredentials.SignInAsync(url, ct, azureOrganization);
+            else await GitCredentials.StoreTokenAsync(url, choice.Username ?? "", choice.Token ?? "", ct, azureOrganization);
             await operation();
         }
     }

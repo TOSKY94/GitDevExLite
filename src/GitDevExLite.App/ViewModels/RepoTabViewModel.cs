@@ -203,15 +203,28 @@ public partial class RepoTabViewModel : ObservableObject, IDisposable
         {
             if (HostedRepository.Provider is HostingProviderKind.GitHub or HostingProviderKind.AzureDevOps)
             {
+                var credentialUrl = HostedRepository.Provider == HostingProviderKind.AzureDevOps
+                    ? $"https://{HostedRepository.Host}/{HostedRepository.Owner}/{HostedRepository.Project}/_git/{HostedRepository.Name}"
+                    : $"https://{HostedRepository.Host}/{HostedRepository.Owner}/{HostedRepository.Name}";
                 var choice = await _dialogs.PromptCredentialsAsync(new CredentialRequest(
-                    $"https://{HostedRepository.Host}/{HostedRepository.Owner}/{HostedRepository.Name}",
+                    credentialUrl,
                     $"Sign in to {HostedRepository.Provider} for {HostedRepository.DisplayName} using a personal access token.",
                     false,
                     false));
                 if (choice is null) return;
                 if (choice.UseGcm)
                     throw new InvalidOperationException($"{HostedRepository.Provider} pull request sign-in currently requires a personal access token.");
-                await GitCredentials.StoreTokenAsync("https", HostedRepository.Host, choice.Username ?? "PAT", choice.Token ?? "", CancellationToken.None);
+                if (HostedRepository.Provider == HostingProviderKind.AzureDevOps)
+                {
+                    var organization = string.IsNullOrWhiteSpace(choice.Organization)
+                        ? HostedRepository.Owner
+                        : choice.Organization.Trim();
+                    if (RepositoryPath is { } repositoryPath)
+                        await GitCredentials.EnableHttpPathAsync(repositoryPath, credentialUrl, CancellationToken.None, organization);
+                    await GitCredentials.StoreTokenAsync(credentialUrl, choice.Username ?? "PAT", choice.Token ?? "", CancellationToken.None, organization);
+                }
+                else
+                    await GitCredentials.StoreTokenAsync("https", HostedRepository.Host, choice.Username ?? "PAT", choice.Token ?? "", CancellationToken.None);
             }
 
             ProviderSession = await _pullRequests.SignInAsync(HostedRepository, CancellationToken.None);
