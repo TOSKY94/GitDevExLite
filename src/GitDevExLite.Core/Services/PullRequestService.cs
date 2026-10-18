@@ -285,23 +285,27 @@ public sealed class PullRequestService : IPullRequestService
             return;
         }
 
+        var mergePayload = new Dictionary<string, object?>
+        {
+            ["merge_method"] = request.Strategy switch
+            {
+                PullRequestMergeStrategy.Squash => "squash",
+                PullRequestMergeStrategy.Rebase => "rebase",
+                _ => "merge"
+            }
+        };
+        if (!string.IsNullOrWhiteSpace(request.CommitTitle))
+            mergePayload["commit_title"] = request.CommitTitle;
+        if (!string.IsNullOrWhiteSpace(request.CommitMessage))
+            mergePayload["commit_message"] = request.CommitMessage;
+
         await SendAsync<object>(
             repository,
             session,
             HttpMethod.Put,
             PullPath(repository, pullRequestId, "merge"),
             ct,
-            new Dictionary<string, object?>
-            {
-                ["merge_method"] = request.Strategy switch
-                {
-                    PullRequestMergeStrategy.Squash => "squash",
-                    PullRequestMergeStrategy.Rebase => "rebase",
-                    _ => "merge"
-                },
-                ["commit_title"] = request.CommitTitle,
-                ["commit_message"] = request.CommitMessage,
-            });
+            mergePayload);
     }
 
     public async Task CheckoutAsync(
@@ -520,6 +524,15 @@ public sealed class PullRequestService : IPullRequestService
             _ => "noFastForward"
         };
 
+        var completionOptions = new Dictionary<string, object?>
+        {
+            ["mergeStrategy"] = strategy,
+            ["deleteSourceBranch"] = request.DeleteSourceBranch,
+        };
+        var commitMessage = request.CommitMessage ?? request.CommitTitle;
+        if (!string.IsNullOrWhiteSpace(commitMessage))
+            completionOptions["mergeCommitMessage"] = commitMessage;
+
         await SendAzureDevOpsAsync<object>(
             repository,
             session,
@@ -529,12 +542,7 @@ public sealed class PullRequestService : IPullRequestService
             new Dictionary<string, object?>
             {
                 ["status"] = "completed",
-                ["completionOptions"] = new Dictionary<string, object?>
-                {
-                    ["mergeStrategy"] = strategy,
-                    ["deleteSourceBranch"] = request.DeleteSourceBranch,
-                    ["mergeCommitMessage"] = request.CommitMessage ?? request.CommitTitle,
-                }
+                ["completionOptions"] = completionOptions
             });
     }
 
