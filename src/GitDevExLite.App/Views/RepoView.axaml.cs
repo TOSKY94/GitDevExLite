@@ -2,6 +2,7 @@ using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Interactivity;
 using GitDevExLite.App.ViewModels;
+using GitDevExLite.Core.Models;
 
 namespace GitDevExLite.App.Views;
 
@@ -14,6 +15,19 @@ public partial class RepoView : UserControl
     private void OnPullRequestDoubleTapped(object? sender, TappedEventArgs e) => OpenPullRequestDetails();
 
     private void OnOpenPullRequestDetails(object? sender, RoutedEventArgs e) => OpenPullRequestDetails();
+
+    private void OnBranchPointerPressed(object? sender, PointerPressedEventArgs e)
+    {
+        if (sender is not ListBox list || !e.GetCurrentPoint(list).Properties.IsRightButtonPressed)
+            return;
+
+        if (e.Source is Control { DataContext: RefInfo branch })
+        {
+            list.SelectedItem = branch;
+            if (DataContext is RepoTabViewModel viewModel)
+                viewModel.SelectedBranch = branch;
+        }
+    }
 
     private void OpenPullRequestDetails()
     {

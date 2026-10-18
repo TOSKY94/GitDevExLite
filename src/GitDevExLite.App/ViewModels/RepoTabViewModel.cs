@@ -71,6 +71,7 @@ public partial class RepoTabViewModel : ObservableObject, IDisposable
     public bool HasPullRequestDetail => PullRequestDetail is not null;
     public bool CanCreatePullRequest => ProviderCapabilities.CanCreatePullRequest && HostedRepository is not null;
     public bool CanCheckoutSelectedPullRequest => ProviderCapabilities.CanCheckoutPullRequest && SelectedPullRequest is not null;
+    public bool CanCheckoutSelectedBranch => SelectedBranch is { IsHead: false } && !OperationState.InProgress;
     public bool CanReviewSelectedPullRequest => ProviderCapabilities.CanReview && SelectedPullRequest is not null;
     public bool CanMergeSelectedPullRequest => ProviderCapabilities.CanMerge && SelectedPullRequest is not null;
         public bool CanCommentSelectedPullRequestInline =>
@@ -1076,11 +1077,23 @@ public partial class RepoTabViewModel : ObservableObject, IDisposable
 
     // ---- branches -----------------------------------------------------------
 
-    [RelayCommand]
+    partial void OnSelectedBranchChanged(RefInfo? value)
+    {
+        OnPropertyChanged(nameof(CanCheckoutSelectedBranch));
+        CheckoutCommand.NotifyCanExecuteChanged();
+    }
+
+    [RelayCommand(CanExecute = nameof(CanCheckoutSelectedBranch))]
     private void Checkout()
     {
-        if (SelectedBranch is not { Kind: RefKind.LocalBranch } b) return;
-        Run(() => _git.Checkout(b.Name));
+        if (SelectedBranch is not { } branch) return;
+        Run(() =>
+        {
+            if (branch.Kind == RefKind.RemoteBranch)
+                _git.CheckoutRemoteBranch(branch.Name);
+            else if (branch.Kind == RefKind.LocalBranch)
+                _git.Checkout(branch.Name);
+        });
     }
 
     private IReadOnlyList<ContextAction> BuildMenu(GraphRow row)

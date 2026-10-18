@@ -21,7 +21,13 @@
           </StackPanel>
         </Border>
         <Expander Header="Local" IsExpanded="True" HorizontalAlignment="Stretch">
-          <ListBox ItemsSource="{Binding LocalBranches}" SelectedItem="{Binding SelectedBranch}">
+          <ListBox x:Name="LocalBranchesList" ItemsSource="{Binding LocalBranches}" SelectedItem="{Binding SelectedBranch}"
+                   PointerPressed="OnBranchPointerPressed">
+            <ListBox.ContextMenu>
+              <ContextMenu>
+                <MenuItem Header="Checkout / switch to this branch" Command="{Binding CheckoutCommand}" />
+              </ContextMenu>
+            </ListBox.ContextMenu>
             <ListBox.ItemTemplate>
               <DataTemplate x:DataType="m:RefInfo">
                 <StackPanel Orientation="Horizontal" Spacing="6">
@@ -35,7 +41,13 @@
           </ListBox>
         </Expander>
         <Expander Header="Remote" HorizontalAlignment="Stretch">
-          <ListBox ItemsSource="{Binding RemoteBranches}" SelectedItem="{Binding SelectedBranch}">
+          <ListBox x:Name="RemoteBranchesList" ItemsSource="{Binding RemoteBranches}" SelectedItem="{Binding SelectedBranch}"
+                   PointerPressed="OnBranchPointerPressed">
+            <ListBox.ContextMenu>
+              <ContextMenu>
+                <MenuItem Header="Checkout / switch to this branch" Command="{Binding CheckoutCommand}" />
+              </ContextMenu>
+            </ListBox.ContextMenu>
             <ListBox.ItemTemplate>
               <DataTemplate x:DataType="m:RefInfo">
                 <TextBlock Text="{Binding Name}" />
