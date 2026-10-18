@@ -9,6 +9,7 @@ namespace GitDevExLite.App.ViewModels;
 public partial class MainViewModel : ObservableObject
 {
     private readonly Func<IGitService> _gitFactory;
+    private readonly AiAssistantService _aiAssistant;
     private readonly IPullRequestService _pullRequests;
     private readonly ISecretScanner _secretScanner;
     private readonly IDialogService _dialogs;
@@ -16,9 +17,10 @@ public partial class MainViewModel : ObservableObject
     private readonly RepoSettings _settings;
     private readonly DispatcherTimer _autoFetchTimer;
 
-    public MainViewModel(Func<IGitService> gitFactory, IPullRequestService pullRequests, ISecretScanner secretScanner, IDialogService dialogs, RepoSettingsStore store)
+    public MainViewModel(Func<IGitService> gitFactory, AiAssistantService aiAssistant, IPullRequestService pullRequests, ISecretScanner secretScanner, IDialogService dialogs, RepoSettingsStore store)
     {
         _gitFactory = gitFactory;
+        _aiAssistant = aiAssistant;
         _pullRequests = pullRequests;
         _secretScanner = secretScanner;
         _dialogs = dialogs;
@@ -66,7 +68,7 @@ public partial class MainViewModel : ObservableObject
                 return;
             }
 
-            var tab = new RepoTabViewModel(_gitFactory(), _pullRequests, _secretScanner, _dialogs, Options);
+            var tab = new RepoTabViewModel(_gitFactory(), _aiAssistant, _pullRequests, _secretScanner, _dialogs, Options);
             tab.OpenRepositoryRequested += OpenRepository;
             tab.Open(path);
             var resolved = tab.RepositoryPath!;
@@ -122,6 +124,51 @@ public partial class MainViewModel : ObservableObject
     private void CheckoutSelected() => SelectedTab?.CheckoutCommand.Execute(null);
 
     [RelayCommand]
+    private async Task ConfigureAi()
+    {
+        try
+        {
+            var current = _aiAssistant.LoadSettings();
+            var result = await _dialogs.ShowAiProviderSettingsAsync(_aiAssistant.GetAvailableProviders(), current);
+            if (result is null) return;
+
+            var settings = new AiProviderSettings(result.Provider, result.Endpoint, result.Model, result.SecretKey);
+            ValidateAiSettings(settings);
+            _aiAssistant.SaveSettings(settings);
+
+            if (!string.IsNullOrWhiteSpace(result.ApiKey))
+                await new GitCredentialAiKeyStore().SaveApiKeyAsync(settings, result.ApiKey.Trim(), CancellationToken.None);
+
+            if (result.TestConnection)
+            {
+                await _aiAssistant.TestConnectionAsync(settings, CancellationToken.None);
+                StatusText = "AI provider settings saved. Connection test succeeded.";
+                return;
+            }
+
+            StatusText = "AI provider settings saved.";
+        }
+        catch (Exception ex)
+        {
+            StatusText = ex.Message;
+        }
+    }
+
+    [RelayCommand]
+    private async Task TestAiConnection()
+    {
+        try
+        {
+            await _aiAssistant.TestConnectionAsync(CancellationToken.None);
+            StatusText = "AI connection test succeeded.";
+        }
+        catch (Exception ex)
+        {
+            StatusText = ex.Message;
+        }
+    }
+
+    [RelayCommand]
     private async Task Clone()
     {
         var parent = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
@@ -139,6 +186,13 @@ public partial class MainViewModel : ObservableObject
         _settings.AutoFetch = Options.AutoFetch;
         _settings.PruneOnFetch = Options.PruneOnFetch;
         _store.Save(_settings);
+    }
+
+    private static void ValidateAiSettings(AiProviderSettings settings)
+    {
+        if (settings.Kind == AiProviderKind.Disabled) return;
+        if (string.IsNullOrWhiteSpace(settings.Endpoint) || string.IsNullOrWhiteSpace(settings.Model))
+            throw new InvalidOperationException("AI provider endpoint and model are required.");
     }
 
     private static bool SamePath(string? a, string? b) =>

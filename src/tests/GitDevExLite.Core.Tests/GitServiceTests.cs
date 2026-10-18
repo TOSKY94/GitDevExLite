@@ -157,6 +157,43 @@ public sealed class GitServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task Ai_commit_draft_uses_staged_diff_excerpt()
+    {
+        Write("a.txt", Numbered(4));
+        CommitAll("first");
+        Write("a.txt", Numbered(4, i => i == 2 ? "updated line" : $"line {i}"));
+        _git.Stage("a.txt");
+
+        var service = CreateAiAssistant(new AiCommitMessageDraft(
+            "Update a.txt",
+            "- a.txt: +1 / -1",
+            new AiPreviewPayload("preview", "diff --git a/a.txt b/a.txt\n-line 2\n+updated line"),
+            "test"));
+
+        var draft = await service.GenerateCommitMessageAsync(_git, amend: false, CancellationToken.None);
+
+        Assert.Equal("Update a.txt", draft.Subject);
+        Assert.Contains("a.txt: +1 / -1", draft.Body);
+        Assert.Contains("diff --git a/a.txt b/a.txt", draft.Preview.Body);
+        Assert.Contains("+updated line", draft.Preview.Body);
+        Assert.Contains("-line 2", draft.Preview.Body);
+    }
+
+    [Fact]
+    public async Task Ai_commit_draft_requires_staged_changes_for_non_amend()
+    {
+        var service = CreateAiAssistant(new AiCommitMessageDraft(
+            "unused",
+            string.Empty,
+            new AiPreviewPayload("preview", string.Empty),
+            "test"));
+
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() => service.GenerateCommitMessageAsync(_git, amend: false, CancellationToken.None));
+
+        Assert.Equal("Stage at least one file before generating an AI commit message.", error.Message);
+    }
+
+    [Fact]
     public void Branch_create_rename_delete_and_checkout()
     {
         Write("a.txt", Numbered(3));
@@ -176,5 +213,63 @@ public sealed class GitServiceTests : IDisposable
 
         _git.CheckoutCommit(sha);
         Assert.DoesNotContain(_git.GetRefs(), r => r.IsHead);
+    }
+
+    private static AiAssistantService CreateAiAssistant(AiCommitMessageDraft draft)
+    {
+        var settings = new InMemoryAiSettingsStore(new AiProviderSettings(
+            AiProviderKind.OpenAiCompatible,
+            "https://api.example.test/v1",
+            "gpt-test"));
+        return new AiAssistantService(settings, new StubAiProviderFactory(draft));
+    }
+
+    private sealed class InMemoryAiSettingsStore : IAiSettingsStore
+    {
+        private AiProviderSettings _settings;
+
+        public InMemoryAiSettingsStore(AiProviderSettings settings)
+        {
+            _settings = settings;
+        }
+
+        public AiProviderSettings Load() => _settings;
+
+        public void Save(AiProviderSettings settings) => _settings = settings;
+    }
+
+    private sealed class StubAiProviderFactory : IAiProviderFactory
+    {
+        private readonly AiCommitMessageDraft _draft;
+
+        public StubAiProviderFactory(AiCommitMessageDraft draft)
+        {
+            _draft = draft;
+        }
+
+        public IReadOnlyList<AiProviderDescriptor> GetAvailableProviders() =>
+        [
+            new(AiProviderKind.OpenAiCompatible, "OpenAI-compatible")
+        ];
+
+        public Task<IAiProvider> CreateAsync(AiProviderSettings settings, CancellationToken cancellationToken) =>
+            Task.FromResult<IAiProvider>(new StubAiProvider(_draft));
+    }
+
+    private sealed class StubAiProvider : IAiProvider
+    {
+        private readonly AiCommitMessageDraft _draft;
+
+        public StubAiProvider(AiCommitMessageDraft draft)
+        {
+            _draft = draft;
+        }
+
+        public string Name => _draft.ProviderName;
+
+        public Task TestConnectionAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+
+        public Task<AiCommitMessageDraft> GenerateCommitMessageAsync(AiGenerateCommitMessageRequest request, CancellationToken cancellationToken) =>
+            Task.FromResult(_draft);
     }
 }

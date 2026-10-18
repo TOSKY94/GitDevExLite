@@ -14,6 +14,7 @@ public partial class RepoTabViewModel : ObservableObject, IDisposable
     public sealed record PullRequestFilterOption(PullRequestFilterKind Value, string Label);
 
     private readonly IGitService _git;
+    private readonly AiAssistantService _aiAssistant;
     private readonly IPullRequestService _pullRequests;
     private readonly ISecretScanner _secretScanner;
     private readonly IDialogService _dialogs;
@@ -24,9 +25,10 @@ public partial class RepoTabViewModel : ObservableObject, IDisposable
     private IReadOnlyList<CommitInfo> _commits = Array.Empty<CommitInfo>();
     private bool _suppressFileSelection;
 
-    public RepoTabViewModel(IGitService git, IPullRequestService pullRequests, ISecretScanner secretScanner, IDialogService dialogs, RemoteOptions options)
+    public RepoTabViewModel(IGitService git, AiAssistantService aiAssistant, IPullRequestService pullRequests, ISecretScanner secretScanner, IDialogService dialogs, RemoteOptions options)
     {
         _git = git;
+        _aiAssistant = aiAssistant;
         _pullRequests = pullRequests;
         _secretScanner = secretScanner;
         _dialogs = dialogs;
@@ -157,6 +159,14 @@ public partial class RepoTabViewModel : ObservableObject, IDisposable
 
     [ObservableProperty, NotifyCanExecuteChangedFor(nameof(CommitCommand))]
     private bool _amend;
+
+    [ObservableProperty, NotifyCanExecuteChangedFor(nameof(GenerateAiCommitMessageCommand))]
+    private bool _isGeneratingAiCommitMessage;
+
+    private bool _trustAiPreviewForSession;
+
+    public bool CanGenerateAiCommitMessage => !IsGeneratingAiCommitMessage && (Staged.Count > 0 || Amend);
+    public bool IsAiConfigured => _aiAssistant.LoadSettings().IsConfigured;
 
     public void Open(string path)
     {
@@ -1189,6 +1199,122 @@ public partial class RepoTabViewModel : ObservableObject, IDisposable
     }
 
     private bool CanCommit() => !string.IsNullOrWhiteSpace(CommitMessage) && (Staged.Count > 0 || Amend);
+
+    [RelayCommand(CanExecute = nameof(CanGenerateAiCommitMessage))]
+    private async Task GenerateAiCommitMessage()
+    {
+        try
+        {
+            IsGeneratingAiCommitMessage = true;
+            if (!await EnsureAiProviderConfiguredAsync())
+            {
+                StatusText = "AI provider setup cancelled.";
+                return;
+            }
+
+            StatusText = "Generating AI commit draft...";
+
+            var draft = await _aiAssistant.GenerateCommitMessageAsync(_git, Amend, CancellationToken.None);
+            if (!_trustAiPreviewForSession)
+            {
+                var preview = await _dialogs.ShowAiPreviewAsync(
+                    "AI commit draft",
+                    $"{draft.ProviderName} will receive the staged diff excerpt below. Nothing will be committed until you confirm.",
+                    draft.Preview.Title,
+                    draft.Preview.Body,
+                    draft.FullMessage);
+                if (!preview.Accepted)
+                {
+                    StatusText = "AI draft cancelled.";
+                    return;
+                }
+
+                _trustAiPreviewForSession = preview.RememberDecision;
+            }
+
+            CommitMessage = draft.FullMessage;
+            StatusText = "AI draft applied to commit message.";
+        }
+        catch (Exception ex)
+        {
+            StatusText = ex.Message;
+        }
+        finally
+        {
+            IsGeneratingAiCommitMessage = false;
+        }
+    }
+
+    [RelayCommand]
+    private async Task ConfigureAi()
+    {
+        try
+        {
+            if (await ShowAiProviderSettingsAsync())
+            {
+                OnPropertyChanged(nameof(IsAiConfigured));
+                StatusText = "AI provider settings saved.";
+            }
+        }
+        catch (Exception ex)
+        {
+            StatusText = ex.Message;
+        }
+    }
+
+    private async Task<bool> EnsureAiProviderConfiguredAsync()
+    {
+        if (_aiAssistant.LoadSettings().IsConfigured)
+            return true;
+
+        return await ShowAiProviderSettingsAsync();
+    }
+
+    private async Task<bool> ShowAiProviderSettingsAsync()
+    {
+        var current = _aiAssistant.LoadSettings();
+        var result = await _dialogs.ShowAiProviderSettingsAsync(_aiAssistant.GetAvailableProviders(), current);
+        if (result is null)
+            return false;
+
+        var settings = new AiProviderSettings(
+            result.Provider,
+            result.Endpoint,
+            result.Model,
+            result.SecretKey);
+
+        if (settings.Kind != AiProviderKind.Disabled &&
+            (string.IsNullOrWhiteSpace(settings.Endpoint) || string.IsNullOrWhiteSpace(settings.Model)))
+            throw new InvalidOperationException("AI endpoint and model are required.");
+
+        _aiAssistant.SaveSettings(settings);
+
+        if (!string.IsNullOrWhiteSpace(result.ApiKey))
+        {
+            var store = new GitCredentialAiKeyStore();
+            await store.SaveApiKeyAsync(settings, result.ApiKey.Trim(), CancellationToken.None);
+        }
+
+        if (result.TestConnection)
+            await _aiAssistant.TestConnectionAsync(settings, CancellationToken.None);
+
+        OnPropertyChanged(nameof(IsAiConfigured));
+        return true;
+    }
+
+    [RelayCommand]
+    private async Task TestAiConnection()
+    {
+        try
+        {
+            await _aiAssistant.TestConnectionAsync(CancellationToken.None);
+            StatusText = "AI connection test succeeded.";
+        }
+        catch (Exception ex)
+        {
+            StatusText = ex.Message;
+        }
+    }
 
     // ---- branches -----------------------------------------------------------
 

@@ -36,12 +36,24 @@ public sealed record PullRequestTemplateOption(string Name, string Content, bool
 
 public sealed record PullRequestCreationFormResult(string SourceBranch, string TargetBranch, string Title, string Description, bool IsDraft);
 
+public sealed record AiPreviewDialogResult(bool Accepted, bool RememberDecision = false);
+
+public sealed record AiProviderSettingsDialogResult(
+    AiProviderKind Provider,
+    string Endpoint,
+    string Model,
+    string ApiKey,
+    string SecretKey,
+    bool TestConnection);
+
 public delegate Task CloneRunner(string url, string destination, IProgress<GitProgress> progress, CancellationToken ct);
 
 public interface IDialogService
 {
     Task<string?> PromptAsync(string title, string label, string initial = "");
     Task<bool> ConfirmAsync(string title, string message);
+    Task<AiPreviewDialogResult> ShowAiPreviewAsync(string title, string message, string previewTitle, string previewBody, string proposedText);
+    Task<AiProviderSettingsDialogResult?> ShowAiProviderSettingsAsync(IReadOnlyList<AiProviderDescriptor> providers, AiProviderSettings currentSettings);
     Task<PullRequestMergeStrategy?> ChoosePullRequestMergeStrategyAsync(IReadOnlyList<PullRequestMergeStrategy> supportedStrategies);
     Task<PullRequestCreationFormResult?> ShowPullRequestCreationAsync(
         HostedRepositoryId repository,

@@ -109,6 +109,173 @@ public partial class MainWindow : Window, IDialogService
         return await dialog.ShowDialog<bool>(this);
     }
 
+    public async Task<AiPreviewDialogResult> ShowAiPreviewAsync(string title, string message, string previewTitle, string previewBody, string proposedText)
+    {
+        var remember = new CheckBox { Content = "Trust AI commit drafts for this repo in this session" };
+        var accept = new Button { Content = "Apply draft", IsDefault = true };
+        var cancel = new Button { Content = "Cancel", IsCancel = true };
+        var previewBox = new TextBox
+        {
+            Text = previewBody,
+            IsReadOnly = true,
+            AcceptsReturn = true,
+            TextWrapping = Avalonia.Media.TextWrapping.Wrap,
+            MinWidth = 560,
+            Height = 180
+        };
+        var resultBox = new TextBox
+        {
+            Text = proposedText,
+            IsReadOnly = true,
+            AcceptsReturn = true,
+            TextWrapping = Avalonia.Media.TextWrapping.Wrap,
+            Height = 84
+        };
+        var dialog = Dialog(title, new StackPanel
+        {
+            Spacing = 10,
+            Margin = new Avalonia.Thickness(16),
+            Children =
+            {
+                new TextBlock { Text = message, TextWrapping = Avalonia.Media.TextWrapping.Wrap, MaxWidth = 560 },
+                new TextBlock { Text = previewTitle, FontWeight = Avalonia.Media.FontWeight.SemiBold },
+                previewBox,
+                new TextBlock { Text = "Proposed commit message", FontWeight = Avalonia.Media.FontWeight.SemiBold },
+                resultBox,
+                remember,
+                new StackPanel
+                {
+                    Orientation = Orientation.Horizontal,
+                    HorizontalAlignment = HorizontalAlignment.Right,
+                    Spacing = 8,
+                    Children = { accept, cancel }
+                }
+            }
+        });
+
+        accept.Click += (_, _) => dialog.Close(new AiPreviewDialogResult(true, remember.IsChecked == true));
+        cancel.Click += (_, _) => dialog.Close(new AiPreviewDialogResult(false, false));
+        return await dialog.ShowDialog<AiPreviewDialogResult>(this);
+    }
+
+    public async Task<AiProviderSettingsDialogResult?> ShowAiProviderSettingsAsync(IReadOnlyList<AiProviderDescriptor> providers, AiProviderSettings currentSettings)
+    {
+        var providerItems = providers.Select(provider => new ComboBoxItem
+        {
+            Content = provider.Label,
+            Tag = provider.Kind
+        }).ToArray();
+        var selectedIndex = Math.Max(0, Array.FindIndex(providerItems, item => (AiProviderKind)item.Tag! == currentSettings.Kind));
+        if (selectedIndex < 0) selectedIndex = 0;
+
+        var providerChoice = new ComboBox
+        {
+            ItemsSource = providerItems,
+            SelectedIndex = selectedIndex,
+            MinWidth = 280
+        };
+        var initialProvider = providers.FirstOrDefault(provider => provider.Kind == currentSettings.Kind) ?? providers.First();
+        var endpoint = new TextBox
+        {
+            Text = string.IsNullOrWhiteSpace(currentSettings.Endpoint) ? initialProvider.DefaultEndpoint : currentSettings.Endpoint,
+            Watermark = initialProvider.EndpointHint,
+            MinWidth = 420
+        };
+        var model = new TextBox
+        {
+            Text = string.IsNullOrWhiteSpace(currentSettings.Model) ? initialProvider.DefaultModel : currentSettings.Model,
+            Watermark = initialProvider.ModelHint
+        };
+        var secretKey = new TextBox { Text = currentSettings.SecretKey, Watermark = "default" };
+        var apiKey = new TextBox { Watermark = "Paste API key to store securely", PasswordChar = '*' };
+        var help = new TextBlock
+        {
+            Text = BuildAiProviderHelp(initialProvider),
+            TextWrapping = Avalonia.Media.TextWrapping.Wrap,
+            MaxWidth = 500,
+            Opacity = 0.75
+        };
+        var modelLabel = new TextBlock { Text = initialProvider.ModelLabel };
+        var test = new Button { Content = "Save and test" };
+        var ok = new Button { Content = "Save", IsDefault = true };
+        var cancel = new Button { Content = "Cancel", IsCancel = true };
+        var lastProvider = initialProvider;
+
+        var dialog = Dialog("AI provider settings", new StackPanel
+        {
+            Spacing = 10,
+            Margin = new Avalonia.Thickness(16),
+            Children =
+            {
+                help,
+                new TextBlock { Text = "Provider" },
+                providerChoice,
+                new TextBlock { Text = "Endpoint" },
+                endpoint,
+                modelLabel,
+                model,
+                new TextBlock { Text = "Credential key" },
+                secretKey,
+                new TextBlock { Text = "API key" },
+                apiKey,
+                new StackPanel
+                {
+                    Orientation = Orientation.Horizontal,
+                    HorizontalAlignment = HorizontalAlignment.Right,
+                    Spacing = 8,
+                    Children = { test, ok, cancel }
+                }
+            }
+        });
+
+        providerChoice.SelectionChanged += (_, _) =>
+        {
+            var selectedProvider = providerChoice.SelectedItem is ComboBoxItem { Tag: AiProviderKind kind }
+                ? providers.FirstOrDefault(provider => provider.Kind == kind)
+                : null;
+            if (selectedProvider is null) return;
+
+            if (ShouldApplyProviderDefault(endpoint.Text, lastProvider.DefaultEndpoint))
+                endpoint.Text = selectedProvider.DefaultEndpoint;
+            if (ShouldApplyProviderDefault(model.Text, lastProvider.DefaultModel))
+                model.Text = selectedProvider.DefaultModel;
+
+            help.Text = BuildAiProviderHelp(selectedProvider);
+            modelLabel.Text = selectedProvider.ModelLabel;
+            endpoint.Watermark = selectedProvider.EndpointHint;
+            model.Watermark = selectedProvider.ModelHint;
+            lastProvider = selectedProvider;
+        };
+
+        void Close(bool testConnection)
+        {
+            var provider = providerChoice.SelectedItem is ComboBoxItem { Tag: AiProviderKind kind }
+                ? kind
+                : AiProviderKind.Disabled;
+            dialog.Close(new AiProviderSettingsDialogResult(
+                provider,
+                endpoint.Text?.Trim() ?? string.Empty,
+                model.Text?.Trim() ?? string.Empty,
+                apiKey.Text ?? string.Empty,
+                string.IsNullOrWhiteSpace(secretKey.Text) ? "default" : secretKey.Text.Trim(),
+                testConnection));
+        }
+
+        test.Click += (_, _) => Close(true);
+        ok.Click += (_, _) => Close(false);
+        cancel.Click += (_, _) => dialog.Close(null);
+        return await dialog.ShowDialog<AiProviderSettingsDialogResult?>(this);
+    }
+
+    private static string BuildAiProviderHelp(AiProviderDescriptor provider) =>
+        string.IsNullOrWhiteSpace(provider.Description)
+            ? "Endpoint, model, and key alias are saved in app settings. The API key is stored via your git credential helper."
+            : $"{provider.Description} Endpoint, model, and key alias are saved in app settings. The API key is stored via your git credential helper.";
+
+    private static bool ShouldApplyProviderDefault(string? currentValue, string previousDefault) =>
+        string.IsNullOrWhiteSpace(currentValue) ||
+        string.Equals(currentValue.Trim(), previousDefault, StringComparison.OrdinalIgnoreCase);
+
     public async Task<PullRequestMergeStrategy?> ChoosePullRequestMergeStrategyAsync(
         IReadOnlyList<PullRequestMergeStrategy> supportedStrategies)
     {

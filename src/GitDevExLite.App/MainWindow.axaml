@@ -12,6 +12,10 @@
         <Button Content="Clone..." Command="{Binding CloneCommand}" />
         <Menu>
           <MenuItem x:Name="RecentMenu" Header="Recent" />
+          <MenuItem Header="AI">
+            <MenuItem Header="Settings..." Command="{Binding ConfigureAiCommand}" />
+            <MenuItem Header="Test connection" Command="{Binding TestAiConnectionCommand}" />
+          </MenuItem>
           <MenuItem Header="Pull">
             <MenuItem Header="Merge" Command="{Binding SelectedTab.PullMergeCommand}" />
             <MenuItem Header="Rebase" Command="{Binding SelectedTab.PullRebaseCommand}" />

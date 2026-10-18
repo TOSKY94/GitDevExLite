@@ -15,7 +15,11 @@ public partial class App : Application
         if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
         {
             var window = new MainWindow();
-            var vm = new MainViewModel(() => new GitService(), new PullRequestService(), new SecretScanner(), window, new RepoSettingsStore());
+            var repoSettings = new RepoSettingsStore();
+            var aiAssistant = new AiAssistantService(
+                new RepoAiSettingsStore(repoSettings),
+                new OpenAiCompatibleAiProviderFactory(new GitCredentialAiKeyStore()));
+            var vm = new MainViewModel(() => new GitService(), aiAssistant, new PullRequestService(), new SecretScanner(), window, repoSettings);
             window.DataContext = vm;
             desktop.MainWindow = window;
 

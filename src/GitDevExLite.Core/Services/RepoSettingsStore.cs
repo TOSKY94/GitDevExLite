@@ -12,6 +12,10 @@ public sealed class RepoSettings
     public bool AutoFetch { get; set; } = true;
     public int AutoFetchMinutes { get; set; } = 5;
     public bool PruneOnFetch { get; set; } = true;
+    public AiProviderKind AiProvider { get; set; } = AiProviderKind.Disabled;
+    public string AiEndpoint { get; set; } = string.Empty;
+    public string AiModel { get; set; } = string.Empty;
+    public string AiSecretKey { get; set; } = "default";
 
     public void AddRecent(string path)
     {
@@ -58,4 +62,34 @@ public sealed class RepoSettingsStore
             // Persisting UI state is best-effort.
         }
     }
+
+    public AiProviderSettings LoadAiSettings()
+    {
+        var settings = Load();
+        return new AiProviderSettings(settings.AiProvider, settings.AiEndpoint, settings.AiModel, settings.AiSecretKey);
+    }
+
+    public void SaveAiSettings(AiProviderSettings aiSettings)
+    {
+        var settings = Load();
+        settings.AiProvider = aiSettings.Kind;
+        settings.AiEndpoint = aiSettings.Endpoint;
+        settings.AiModel = aiSettings.Model;
+        settings.AiSecretKey = string.IsNullOrWhiteSpace(aiSettings.SecretKey) ? "default" : aiSettings.SecretKey.Trim();
+        Save(settings);
+    }
+}
+
+public sealed class RepoAiSettingsStore : IAiSettingsStore
+{
+    private readonly RepoSettingsStore _store;
+
+    public RepoAiSettingsStore(RepoSettingsStore store)
+    {
+        _store = store;
+    }
+
+    public AiProviderSettings Load() => _store.LoadAiSettings();
+
+    public void Save(AiProviderSettings settings) => _store.SaveAiSettings(settings);
 }
