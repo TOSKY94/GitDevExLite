@@ -30,7 +30,11 @@ public sealed record ContextAction(string Header, Func<Task> Execute);
 public sealed record CredentialRequest(string? Url, string Message, bool IsSsh, bool GcmAvailable);
 
 /// <summary>UseGcm triggers an interactive Git Credential Manager sign-in; otherwise Username/Token are stored.</summary>
-public sealed record CredentialChoice(bool UseGcm, string? Username, string? Token);
+public sealed record CredentialChoice(bool UseGcm, string? Username, string? Token, string? Organization = null);
+
+public sealed record PullRequestTemplateOption(string Name, string Content, bool IsDefault = false);
+
+public sealed record PullRequestCreationFormResult(string SourceBranch, string TargetBranch, string Title, string Description, bool IsDraft);
 
 public delegate Task CloneRunner(string url, string destination, IProgress<GitProgress> progress, CancellationToken ct);
 
@@ -38,6 +42,13 @@ public interface IDialogService
 {
     Task<string?> PromptAsync(string title, string label, string initial = "");
     Task<bool> ConfirmAsync(string title, string message);
+    Task<PullRequestMergeStrategy?> ChoosePullRequestMergeStrategyAsync(IReadOnlyList<PullRequestMergeStrategy> supportedStrategies);
+    Task<PullRequestCreationFormResult?> ShowPullRequestCreationAsync(
+        HostedRepositoryId repository,
+        IReadOnlyList<string> sourceBranches,
+        IReadOnlyList<string> targetBranches,
+        CreatePullRequestDraft draft,
+        IReadOnlyList<PullRequestTemplateOption> templates);
     Task CopyTextAsync(string text);
     Task<CredentialChoice?> PromptCredentialsAsync(CredentialRequest request);
 
@@ -62,7 +73,7 @@ public sealed partial class RemoteOptions : CommunityToolkit.Mvvm.ComponentModel
 public static class AuthRetry
 {
     /// <summary>Runs <paramref name="operation"/>; on an auth failure asks for credentials once and retries.</summary>
-    public static async Task RunAsync(IDialogService dialogs, Func<string?> remoteUrl, Func<Task> operation, CancellationToken ct)
+    public static async Task RunAsync(IDialogService dialogs, Func<string?> remoteUrl, Func<Task> operation, CancellationToken ct, string? repositoryPath = null)
     {
         try
         {
@@ -76,8 +87,18 @@ public static class AuthRetry
             var choice = await dialogs.PromptCredentialsAsync(request);
             if (choice is null || request.IsSsh || url is null) throw;
 
-            if (choice.UseGcm) await GitCredentials.SignInAsync(url, ct);
-            else await GitCredentials.StoreTokenAsync(url, choice.Username ?? "", choice.Token ?? "", ct);
+            var azureOrganization = string.IsNullOrWhiteSpace(choice.Organization)
+                ? GitCredentials.GetAzureDevOpsOrganization(url)
+                : choice.Organization.Trim();
+            if (GitCredentials.IsAzureDevOpsUrl(url) &&
+                GitCredentials.RequiresAzureDevOpsOrganization(ex.Message) &&
+                string.IsNullOrWhiteSpace(azureOrganization))
+                throw new InvalidOperationException("Enter the Azure DevOps organization name to continue.");
+
+            if (repositoryPath is not null)
+                await GitCredentials.EnableHttpPathAsync(repositoryPath, url, ct, azureOrganization);
+            if (choice.UseGcm) await GitCredentials.SignInAsync(url, ct, azureOrganization);
+            else await GitCredentials.StoreTokenAsync(url, choice.Username ?? "", choice.Token ?? "", ct, azureOrganization);
             await operation();
         }
     }

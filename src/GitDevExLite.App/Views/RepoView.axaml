@@ -21,7 +21,13 @@
           </StackPanel>
         </Border>
         <Expander Header="Local" IsExpanded="True" HorizontalAlignment="Stretch">
-          <ListBox ItemsSource="{Binding LocalBranches}" SelectedItem="{Binding SelectedBranch}">
+          <ListBox x:Name="LocalBranchesList" ItemsSource="{Binding LocalBranches}" SelectedItem="{Binding SelectedBranch}"
+                   PointerPressed="OnBranchPointerPressed">
+            <ListBox.ContextMenu>
+              <ContextMenu>
+                <MenuItem Header="Checkout / switch to this branch" Command="{Binding CheckoutCommand}" />
+              </ContextMenu>
+            </ListBox.ContextMenu>
             <ListBox.ItemTemplate>
               <DataTemplate x:DataType="m:RefInfo">
                 <StackPanel Orientation="Horizontal" Spacing="6">
@@ -35,7 +41,13 @@
           </ListBox>
         </Expander>
         <Expander Header="Remote" HorizontalAlignment="Stretch">
-          <ListBox ItemsSource="{Binding RemoteBranches}" SelectedItem="{Binding SelectedBranch}">
+          <ListBox x:Name="RemoteBranchesList" ItemsSource="{Binding RemoteBranches}" SelectedItem="{Binding SelectedBranch}"
+                   PointerPressed="OnBranchPointerPressed">
+            <ListBox.ContextMenu>
+              <ContextMenu>
+                <MenuItem Header="Checkout / switch to this branch" Command="{Binding CheckoutCommand}" />
+              </ContextMenu>
+            </ListBox.ContextMenu>
             <ListBox.ItemTemplate>
               <DataTemplate x:DataType="m:RefInfo">
                 <TextBlock Text="{Binding Name}" />
@@ -88,6 +100,8 @@
               <Button Content="Refresh"
                       Command="{Binding RefreshPullRequestsCommand}"
                       IsEnabled="{Binding HasHostedRepository}" />
+              <Button Content="Open details" Click="OnOpenPullRequestDetails"
+                      IsEnabled="{Binding SelectedPullRequest, Converter={x:Static ObjectConverters.IsNotNull}}" />
             </StackPanel>
             <ComboBox ItemsSource="{Binding PullRequestFilters}"
                       SelectedValue="{Binding PullRequestFilter}"
@@ -99,7 +113,8 @@
                 </DataTemplate>
               </ComboBox.ItemTemplate>
             </ComboBox>
-            <ListBox ItemsSource="{Binding PullRequests}" SelectedItem="{Binding SelectedPullRequest}">
+            <ListBox x:Name="PullRequestList" ItemsSource="{Binding PullRequests}" SelectedItem="{Binding SelectedPullRequest}"
+                     DoubleTapped="OnPullRequestDoubleTapped">
               <ListBox.ItemTemplate>
                 <DataTemplate x:DataType="m:PullRequestListItem">
                   <Border Background="#22FFFFFF" CornerRadius="6" Padding="8,6" Margin="0,2">
@@ -174,77 +189,16 @@
 
       <!-- Details / working directory + diff -->
       <Grid Grid.Row="3" ColumnDefinitions="320,Auto,*">
-        <!-- Pull request detail mode -->
-        <Grid Grid.Column="0" RowDefinitions="Auto,*" Margin="8"
-              IsVisible="{Binding HasPullRequestDetail}">
-          <StackPanel Grid.Row="0" Spacing="6">
-            <TextBlock Text="{Binding PullRequestDetailTitle}" FontWeight="Bold" FontSize="15" TextWrapping="Wrap" />
-            <WrapPanel Orientation="Horizontal">
-              <Button Content="Checkout" Command="{Binding CheckoutPullRequestCommand}" Margin="0,0,6,6" />
-              <Button Content="&#x2714; Approve" Command="{Binding ApprovePullRequestCommand}" Background="#2E7D32" Margin="0,0,6,6" />
-              <Button Content="Request changes" Command="{Binding RequestPullRequestChangesCommand}" Background="#E65100" Margin="0,0,6,6" />
-              <Button Content="Comment" Command="{Binding CommentOnPullRequestCommand}" Margin="0,0,6,6" />
-              <Button Content="Merge" Command="{Binding MergePullRequestCommand}" Background="#6A1B9A" Margin="0,0,6,6" />
-            </WrapPanel>
-            <TextBlock Text="{Binding PullRequestDetail.Description}" TextWrapping="Wrap" Opacity="0.85" />
-            <TextBlock Text="{Binding PullRequestDetailSummary}" Opacity="0.7" TextWrapping="Wrap" />
-            <TextBlock Text="Checks" FontWeight="SemiBold" Margin="0,8,0,0" />
-            <ItemsControl ItemsSource="{Binding PullRequestStatusChecks}">
-              <ItemsControl.ItemTemplate>
-                <DataTemplate x:DataType="m:PullRequestStatusCheck">
-                  <DockPanel LastChildFill="True">
-                    <TextBlock Text="{Binding Status}" Width="90" Opacity="0.7" DockPanel.Dock="Left" />
-                    <TextBlock Text="{Binding Name}" TextWrapping="Wrap" />
-                  </DockPanel>
-                </DataTemplate>
-              </ItemsControl.ItemTemplate>
-            </ItemsControl>
-            <TextBlock Text="Commits" FontWeight="SemiBold" Margin="0,8,0,0" />
-            <ItemsControl ItemsSource="{Binding PullRequestCommits}">
-              <ItemsControl.ItemTemplate>
-                <DataTemplate x:DataType="m:PullRequestCommit">
-                  <StackPanel Spacing="1">
-                    <TextBlock Text="{Binding Summary}" TextWrapping="Wrap" />
-                    <TextBlock Opacity="0.65" Text="{Binding Sha, StringFormat='{}{0}'}" />
-                  </StackPanel>
-                </DataTemplate>
-              </ItemsControl.ItemTemplate>
-            </ItemsControl>
-            <TextBlock Text="Threads" FontWeight="SemiBold" Margin="0,8,0,0" />
-            <ItemsControl ItemsSource="{Binding PullRequestThreads}">
-              <ItemsControl.ItemTemplate>
-                <DataTemplate x:DataType="m:PullRequestThread">
-                  <StackPanel Spacing="2">
-                    <TextBlock Text="{Binding Anchor.Path}" Opacity="0.65"
-                               IsVisible="{Binding Anchor, Converter={x:Static ObjectConverters.IsNotNull}}" />
-                    <ItemsControl ItemsSource="{Binding Comments}">
-                      <ItemsControl.ItemTemplate>
-                        <DataTemplate x:DataType="m:PullRequestComment">
-                          <TextBlock TextWrapping="Wrap">
-                            <Run Text="{Binding Author}" />
-                            <Run Text=": " />
-                            <Run Text="{Binding Body}" />
-                          </TextBlock>
-                        </DataTemplate>
-                      </ItemsControl.ItemTemplate>
-                    </ItemsControl>
-                  </StackPanel>
-                </DataTemplate>
-              </ItemsControl.ItemTemplate>
-            </ItemsControl>
-            <TextBlock Text="Changed files" FontWeight="SemiBold" Margin="0,8,0,0" />
+        <!-- PR detail is presented in a dedicated review window. -->
+        <Border Grid.Column="0" Margin="8" Padding="12" CornerRadius="6" Background="#17191D"
+                IsVisible="{Binding HasPullRequestDetail}">
+          <StackPanel Spacing="8" VerticalAlignment="Top">
+            <TextBlock Text="Pull request selected" FontWeight="SemiBold" />
+            <TextBlock Text="Open the pull request window to review its description, files, commits, checks, and comments."
+                       TextWrapping="Wrap" Opacity="0.75" />
+            <Button Content="Open pull request details" Click="OnOpenPullRequestDetails" />
           </StackPanel>
-          <ListBox Grid.Row="1" ItemsSource="{Binding CommitFiles}" SelectedItem="{Binding SelectedCommitFile}">
-            <ListBox.ItemTemplate>
-              <DataTemplate x:DataType="m:ChangedFile">
-                <StackPanel Orientation="Horizontal" Spacing="6">
-                  <TextBlock Text="{Binding Status}" Opacity="0.6" Width="60" />
-                  <TextBlock Text="{Binding Path}" />
-                </StackPanel>
-              </DataTemplate>
-            </ListBox.ItemTemplate>
-          </ListBox>
-        </Grid>
+        </Border>
 
         <!-- Commit mode -->
         <Grid Grid.Column="0" RowDefinitions="Auto,*" Margin="8"
@@ -290,7 +244,7 @@
                           ToolTip.Tip="Stage file"
                           Command="{Binding $parent[UserControl].((vm:RepoTabViewModel)DataContext).StageFileCommand}"
                           CommandParameter="{Binding}" />
-                  <TextBlock Text="{Binding Status}" Opacity="0.6" Width="64" DockPanel.Dock="Left" />
+                  <TextBlock Text="{Binding Status}" Opacity="0.6" Width="64" Margin="0,0,8,0" DockPanel.Dock="Left" />
                   <TextBlock Text="{Binding Path}" TextTrimming="CharacterEllipsis" />
                 </DockPanel>
               </DataTemplate>
@@ -309,7 +263,7 @@
                           ToolTip.Tip="Unstage file"
                           Command="{Binding $parent[UserControl].((vm:RepoTabViewModel)DataContext).UnstageFileCommand}"
                           CommandParameter="{Binding}" />
-                  <TextBlock Text="{Binding Status}" Opacity="0.6" Width="64" DockPanel.Dock="Left" />
+                  <TextBlock Text="{Binding Status}" Opacity="0.6" Width="64" Margin="0,0,8,0" DockPanel.Dock="Left" />
                   <TextBlock Text="{Binding Path}" TextTrimming="CharacterEllipsis" />
                 </DockPanel>
               </DataTemplate>

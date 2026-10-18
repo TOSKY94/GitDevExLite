@@ -1,0 +1,162 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:GitDevExLite.App.ViewModels"
+        xmlns:m="using:GitDevExLite.Core.Models"
+        xmlns:ctl="using:GitDevExLite.App.Controls"
+        x:Class="GitDevExLite.App.Views.PullRequestDetailsWindow"
+        x:DataType="vm:RepoTabViewModel"
+        Title="Pull request review" Width="1320" Height="850"
+        MinWidth="980" MinHeight="640"
+        WindowStartupLocation="CenterOwner"
+        Background="#111315">
+  <Grid RowDefinitions="Auto,Auto,*" Margin="14">
+    <Border Grid.Row="0" Background="#1B1E22" CornerRadius="8" Padding="18" BorderBrush="#34383D" BorderThickness="1">
+      <Grid RowDefinitions="Auto,Auto,Auto" ColumnDefinitions="*,Auto">
+        <StackPanel Grid.Row="0" Grid.Column="0" Spacing="8">
+          <StackPanel Orientation="Horizontal" Spacing="10">
+            <Border Background="#2E7D32" CornerRadius="10" Padding="8,3"
+                    IsVisible="{Binding !SelectedPullRequest.IsDraft}">
+              <TextBlock Text="{Binding SelectedPullRequest.Status}" FontSize="11" Foreground="White" />
+            </Border>
+            <Border Background="#616161" CornerRadius="10" Padding="8,3"
+                    IsVisible="{Binding SelectedPullRequest.IsDraft}">
+              <TextBlock Text="Draft" FontSize="11" Foreground="White" />
+            </Border>
+            <TextBlock Text="{Binding PullRequestDetailTitle}" FontWeight="Bold" FontSize="22" TextWrapping="Wrap" />
+          </StackPanel>
+          <TextBlock Text="{Binding PullRequestDetailSummary}" Opacity="0.72" TextWrapping="Wrap" />
+          <StackPanel Orientation="Horizontal" Spacing="6">
+            <Border Background="#234B37" CornerRadius="4" Padding="8,3">
+              <TextBlock Text="{Binding SelectedPullRequest.SourceBranch}" FontSize="12" Foreground="#A5D6A7" />
+            </Border>
+            <TextBlock Text="&#x2192;" VerticalAlignment="Center" Opacity="0.7" />
+            <Border Background="#1D3B58" CornerRadius="4" Padding="8,3">
+              <TextBlock Text="{Binding SelectedPullRequest.TargetBranch}" FontSize="12" Foreground="#90CAF9" />
+            </Border>
+          </StackPanel>
+        </StackPanel>
+        <WrapPanel Grid.Row="0" Grid.Column="1" HorizontalAlignment="Right" VerticalAlignment="Top" MaxWidth="440">
+          <Button Content="Checkout" Command="{Binding CheckoutPullRequestCommand}" Margin="4" />
+          <Button Content="&#x2714; Approve" Command="{Binding ApprovePullRequestCommand}" Background="#2E7D32" Margin="4" />
+          <Button Content="Request changes" Command="{Binding RequestPullRequestChangesCommand}" Background="#B64B16" Margin="4" />
+          <Button Content="Comment" Command="{Binding CommentOnPullRequestCommand}" Margin="4" />
+          <Button Content="Merge" Command="{Binding MergePullRequestCommand}" Background="#6A1B9A" Margin="4" />
+        </WrapPanel>
+      </Grid>
+    </Border>
+
+    <TabControl Grid.Row="2" Margin="0,12,0,0">
+      <TabItem Header="Overview">
+        <ScrollViewer VerticalScrollBarVisibility="Auto">
+          <Grid ColumnDefinitions="2*,*" Margin="8">
+            <Border Grid.Column="0" Background="#1B1E22" CornerRadius="8" Padding="16" BorderBrush="#34383D" BorderThickness="1">
+              <StackPanel Spacing="12">
+                <TextBlock Text="Description" FontWeight="SemiBold" FontSize="16" />
+                <TextBlock Text="{Binding PullRequestDetail.Description}" TextWrapping="Wrap" LineHeight="21" />
+              </StackPanel>
+            </Border>
+            <StackPanel Grid.Column="1" Spacing="12">
+              <Border Background="#1B1E22" CornerRadius="8" Padding="14" BorderBrush="#34383D" BorderThickness="1">
+                <StackPanel Spacing="8">
+                  <TextBlock Text="Checks" FontWeight="SemiBold" FontSize="16" />
+                  <ItemsControl ItemsSource="{Binding PullRequestStatusChecks}">
+                    <ItemsControl.ItemTemplate>
+                      <DataTemplate x:DataType="m:PullRequestStatusCheck">
+                        <Grid ColumnDefinitions="Auto,*" Margin="0,3">
+                          <TextBlock Text="{Binding Status}" Width="100" Opacity="0.75" />
+                          <TextBlock Grid.Column="1" Text="{Binding Name}" TextWrapping="Wrap" />
+                        </Grid>
+                      </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                  </ItemsControl>
+                </StackPanel>
+              </Border>
+              <Border Background="#1B1E22" CornerRadius="8" Padding="14" BorderBrush="#34383D" BorderThickness="1">
+                <StackPanel Spacing="8">
+                  <TextBlock Text="Commits" FontWeight="SemiBold" FontSize="16" />
+                  <ItemsControl ItemsSource="{Binding PullRequestCommits}">
+                    <ItemsControl.ItemTemplate>
+                      <DataTemplate x:DataType="m:PullRequestCommit">
+                        <Border BorderBrush="#34383D" BorderThickness="0,0,0,1" Padding="0,5">
+                          <StackPanel Spacing="2">
+                            <TextBlock Text="{Binding Summary}" TextWrapping="Wrap" />
+                            <TextBlock Text="{Binding Sha}" FontFamily="Consolas,Menlo,monospace" FontSize="11" Opacity="0.6" />
+                          </StackPanel>
+                        </Border>
+                      </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                  </ItemsControl>
+                </StackPanel>
+              </Border>
+            </StackPanel>
+          </Grid>
+        </ScrollViewer>
+      </TabItem>
+
+      <TabItem Header="Changes">
+        <Grid ColumnDefinitions="300,Auto,*" Margin="6">
+          <Border Grid.Column="0" Background="#1B1E22" CornerRadius="6" Padding="8">
+            <DockPanel>
+              <TextBlock DockPanel.Dock="Top" Text="Changed files" FontWeight="SemiBold" FontSize="15" Margin="4,4,4,10" />
+              <ListBox ItemsSource="{Binding CommitFiles}" SelectedItem="{Binding SelectedCommitFile}">
+                <ListBox.ItemTemplate>
+                  <DataTemplate x:DataType="m:ChangedFile">
+                    <Grid ColumnDefinitions="34,*" Margin="2,4">
+                      <TextBlock Text="{Binding Status}" Foreground="#90CAF9" FontSize="11" />
+                      <TextBlock Grid.Column="1" Text="{Binding Path}" TextWrapping="Wrap" />
+                    </Grid>
+                  </DataTemplate>
+                </ListBox.ItemTemplate>
+              </ListBox>
+            </DockPanel>
+          </Border>
+          <GridSplitter Grid.Column="1" Width="5" />
+          <Grid Grid.Column="2" RowDefinitions="Auto,*" Margin="8,0,0,0">
+            <DockPanel Grid.Row="0" Margin="0,0,0,6">
+              <Button DockPanel.Dock="Right" Content="Comment on selection" Command="{Binding AddInlinePullRequestCommentCommand}"
+                      IsVisible="{Binding CanCommentSelectedPullRequestInline}" />
+              <ToggleButton DockPanel.Dock="Right" Content="Side by side" Margin="6,0"
+                            IsChecked="{Binding SideBySide, Mode=TwoWay}" />
+              <TextBlock Text="{Binding ActiveDiff.Path}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
+            </DockPanel>
+            <Border Grid.Row="1" Background="#1B1E22" CornerRadius="6">
+              <ctl:DiffView Diff="{Binding ActiveDiff}" SideBySide="{Binding SideBySide}"
+                            Selection="{Binding Selection}" />
+            </Border>
+          </Grid>
+        </Grid>
+      </TabItem>
+
+      <TabItem Header="Conversation">
+        <ScrollViewer VerticalScrollBarVisibility="Auto">
+          <StackPanel Spacing="10" Margin="14">
+            <TextBlock Text="Conversation" FontWeight="SemiBold" FontSize="16" />
+            <ItemsControl ItemsSource="{Binding PullRequestThreads}">
+              <ItemsControl.ItemTemplate>
+                <DataTemplate x:DataType="m:PullRequestThread">
+                  <Border Background="#1B1E22" CornerRadius="6" Padding="12" BorderBrush="#34383D" BorderThickness="1">
+                    <StackPanel Spacing="7">
+                      <TextBlock Text="{Binding Anchor.Path}" Opacity="0.65"
+                                 IsVisible="{Binding Anchor, Converter={x:Static ObjectConverters.IsNotNull}}" />
+                      <ItemsControl ItemsSource="{Binding Comments}">
+                        <ItemsControl.ItemTemplate>
+                          <DataTemplate x:DataType="m:PullRequestComment">
+                            <TextBlock TextWrapping="Wrap" LineHeight="20">
+                              <Run Text="{Binding Author}" FontWeight="SemiBold" />
+                              <Run Text="  " />
+                              <Run Text="{Binding Body}" />
+                            </TextBlock>
+                          </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                      </ItemsControl>
+                    </StackPanel>
+                  </Border>
+                </DataTemplate>
+              </ItemsControl.ItemTemplate>
+            </ItemsControl>
+          </StackPanel>
+        </ScrollViewer>
+      </TabItem>
+    </TabControl>
+  </Grid>
+</Window>

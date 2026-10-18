@@ -162,7 +162,7 @@ public class PullRequestServiceTests
                 (HttpMethod.Get, "/octo-org/ProjectOne/_apis/git/repositories/GitDevExLite/pullRequests/52/commits?api-version=7.1", "{\"value\":[{\"commitId\":\"abc123\",\"comment\":\"Add ADO provider\\n\\nMore\",\"author\":{\"name\":\"Octo Cat\",\"date\":\"2026-10-17T09:00:00Z\"}}]}"),
                 (HttpMethod.Get, "/octo-org/ProjectOne/_apis/git/repositories/GitDevExLite/pullRequests/52/threads?api-version=7.1", "{\"value\":[{\"id\":7,\"status\":\"active\",\"threadContext\":{\"filePath\":\"/src/file.cs\",\"rightFileStart\":{\"line\":12}},\"comments\":[{\"id\":8,\"content\":\"Inline\",\"publishedDate\":\"2026-10-17T09:32:00Z\",\"author\":{\"displayName\":\"Reviewer\",\"uniqueName\":\"reviewer@example.com\"}}]}]}"),
                 (HttpMethod.Get, "/octo-org/ProjectOne/_apis/git/repositories/GitDevExLite/pullRequests/52/iterations?api-version=7.1", "{\"value\":[{\"id\":1}]}"),
-                (HttpMethod.Get, "/octo-org/ProjectOne/_apis/git/repositories/GitDevExLite/pullRequests/52/iterations/1/changes?api-version=7.1", "{\"changes\":[{\"changeType\":\"edit\",\"item\":{\"path\":\"/src/file.cs\"}}]}"),
+                (HttpMethod.Get, "/octo-org/ProjectOne/_apis/git/repositories/GitDevExLite/pullRequests/52/iterations/1/changes?api-version=7.1", "{\"changeEntries\":[{\"changeType\":\"edit\",\"item\":{\"path\":\"/src/file.cs\"}}]}"),
                 (HttpMethod.Get, "/octo-org/ProjectOne/_apis/git/repositories/GitDevExLite/pullRequests/52/statuses?api-version=7.1", "{\"value\":[{\"state\":\"succeeded\",\"description\":\"passed\",\"targetUrl\":\"https://ci.example/build\",\"context\":{\"name\":\"build\"}}]}")));
 
         var detail = await service.GetDetailAsync(AzureDevOpsRepository, "52", CancellationToken.None);
@@ -219,7 +219,7 @@ public class PullRequestServiceTests
         var auth = new AzureDevOpsPullRequestAuthService(
             store,
             new HttpClient(CreateHandler(
-                (HttpMethod.Get, "/_apis/connectionData?connectOptions=IncludeServices&lastChangeId=-1&lastChangeId64=-1", "{\"authenticatedUser\":{\"id\":\"aad-1\",\"displayName\":\"Octo Cat\",\"uniqueName\":\"octo@example.com\"}}")))
+                (HttpMethod.Get, "/octo-org/_apis/connectionData?connectOptions=IncludeServices&lastChangeId=-1&lastChangeId64=-1", "{\"authenticatedUser\":{\"id\":\"aad-1\",\"displayName\":\"Octo Cat\",\"uniqueName\":\"octo@example.com\"}}")))
             {
                 BaseAddress = new Uri("https://dev.azure.com/")
             },

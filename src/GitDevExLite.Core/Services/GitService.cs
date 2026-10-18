@@ -120,6 +120,28 @@ public sealed partial class GitService : IGitService
         Commands.Checkout(Repo, branch);
     }
 
+    public void CheckoutRemoteBranch(string remoteBranchName)
+    {
+        var remoteBranch = Repo.Branches[remoteBranchName]
+            ?? throw new ArgumentException($"Remote branch '{remoteBranchName}' not found.");
+        if (!remoteBranch.IsRemote)
+            throw new ArgumentException($"'{remoteBranchName}' is not a remote branch.");
+
+        var separator = remoteBranch.FriendlyName.IndexOf('/');
+        if (separator <= 0 || separator == remoteBranch.FriendlyName.Length - 1)
+            throw new InvalidOperationException($"Cannot determine a local branch name for '{remoteBranchName}'.");
+
+        var localName = remoteBranch.FriendlyName[(separator + 1)..];
+        var localBranch = Repo.Branches[localName];
+        if (localBranch is null)
+        {
+            localBranch = Repo.Branches.Add(localName, remoteBranch.Tip);
+            Repo.Branches.Update(localBranch, branch => branch.TrackedBranch = remoteBranch.CanonicalName);
+        }
+
+        Commands.Checkout(Repo, localBranch);
+    }
+
     public IReadOnlyList<ChangedFile> GetCommitChanges(string sha)
     {
         var commit = Repo.Lookup<Commit>(sha) ?? throw new ArgumentException($"Commit '{sha}' not found.");

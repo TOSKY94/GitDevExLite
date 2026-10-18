@@ -16,6 +16,7 @@ public interface IGitService : IDisposable
     void Commit(string message, bool amend = false);
     string? GetHeadMessage();
     void Checkout(string branchName);
+    void CheckoutRemoteBranch(string remoteBranchName);
 
     IReadOnlyList<ChangedFile> GetCommitChanges(string sha);
     FileDiff GetCommitDiff(string sha, string path);

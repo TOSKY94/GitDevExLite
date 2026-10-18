@@ -71,6 +71,7 @@ public partial class RepoTabViewModel : ObservableObject, IDisposable
     public bool HasPullRequestDetail => PullRequestDetail is not null;
     public bool CanCreatePullRequest => ProviderCapabilities.CanCreatePullRequest && HostedRepository is not null;
     public bool CanCheckoutSelectedPullRequest => ProviderCapabilities.CanCheckoutPullRequest && SelectedPullRequest is not null;
+    public bool CanCheckoutSelectedBranch => SelectedBranch is { IsHead: false } && !OperationState.InProgress;
     public bool CanReviewSelectedPullRequest => ProviderCapabilities.CanReview && SelectedPullRequest is not null;
     public bool CanMergeSelectedPullRequest => ProviderCapabilities.CanMerge && SelectedPullRequest is not null;
         public bool CanCommentSelectedPullRequestInline =>
@@ -203,15 +204,28 @@ public partial class RepoTabViewModel : ObservableObject, IDisposable
         {
             if (HostedRepository.Provider is HostingProviderKind.GitHub or HostingProviderKind.AzureDevOps)
             {
+                var credentialUrl = HostedRepository.Provider == HostingProviderKind.AzureDevOps
+                    ? $"https://{HostedRepository.Host}/{HostedRepository.Owner}/{HostedRepository.Project}/_git/{HostedRepository.Name}"
+                    : $"https://{HostedRepository.Host}/{HostedRepository.Owner}/{HostedRepository.Name}";
                 var choice = await _dialogs.PromptCredentialsAsync(new CredentialRequest(
-                    $"https://{HostedRepository.Host}/{HostedRepository.Owner}/{HostedRepository.Name}",
+                    credentialUrl,
                     $"Sign in to {HostedRepository.Provider} for {HostedRepository.DisplayName} using a personal access token.",
                     false,
                     false));
                 if (choice is null) return;
                 if (choice.UseGcm)
                     throw new InvalidOperationException($"{HostedRepository.Provider} pull request sign-in currently requires a personal access token.");
-                await GitCredentials.StoreTokenAsync("https", HostedRepository.Host, choice.Username ?? "PAT", choice.Token ?? "", CancellationToken.None);
+                if (HostedRepository.Provider == HostingProviderKind.AzureDevOps)
+                {
+                    var organization = string.IsNullOrWhiteSpace(choice.Organization)
+                        ? HostedRepository.Owner
+                        : choice.Organization.Trim();
+                    if (RepositoryPath is { } repositoryPath)
+                        await GitCredentials.EnableHttpPathAsync(repositoryPath, credentialUrl, CancellationToken.None, organization);
+                    await GitCredentials.StoreTokenAsync(credentialUrl, choice.Username ?? "PAT", choice.Token ?? "", CancellationToken.None, organization);
+                }
+                else
+                    await GitCredentials.StoreTokenAsync("https", HostedRepository.Host, choice.Username ?? "PAT", choice.Token ?? "", CancellationToken.None);
             }
 
             ProviderSession = await _pullRequests.SignInAsync(HostedRepository, CancellationToken.None);
@@ -237,8 +251,11 @@ public partial class RepoTabViewModel : ObservableObject, IDisposable
         if (HostedRepository is null) return;
 
         var sourceBranch = CurrentBranchName;
-        var targetBranch = (await _dialogs.PromptAsync("Create pull request", "Target branch:", "main"))?.Trim();
-        if (string.IsNullOrWhiteSpace(targetBranch)) return;
+        var targetBranches = GetPullRequestTargetBranches(sourceBranch);
+        var targetBranch = targetBranches.FirstOrDefault(branch => string.Equals(branch, "main", StringComparison.OrdinalIgnoreCase))
+            ?? targetBranches.FirstOrDefault(branch => string.Equals(branch, "master", StringComparison.OrdinalIgnoreCase))
+            ?? targetBranches.FirstOrDefault()
+            ?? "main";
 
         CreatePullRequestDraft draft;
         try
@@ -251,14 +268,13 @@ public partial class RepoTabViewModel : ObservableObject, IDisposable
             return;
         }
 
-        var title = (await _dialogs.PromptAsync("Create pull request", "Title:", draft.Title))?.Trim();
-        if (string.IsNullOrWhiteSpace(title)) return;
-        var description = await _dialogs.PromptAsync("Create pull request", "Description:", draft.Description) ?? "";
-        var isDraft = await _dialogs.ConfirmAsync(
-            "Create pull request",
-            draft.IsDraft
-                ? "Create this pull request as a draft?"
-                : "Create this pull request as a draft instead of ready for review?");
+        var form = await _dialogs.ShowPullRequestCreationAsync(
+            HostedRepository,
+            LocalBranches.Select(branch => branch.Name).Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(name => name, StringComparer.OrdinalIgnoreCase).ToArray(),
+            targetBranches,
+            draft,
+            FindPullRequestTemplates(draft.TargetBranch));
+        if (form is null) return;
 
         var secretMatches = _secretScanner.Scan(_git, Staged.Concat(Unstaged).ToList());
         if (secretMatches.Count > 0)
@@ -281,7 +297,7 @@ public partial class RepoTabViewModel : ObservableObject, IDisposable
             IsBusy = true;
             var created = await _pullRequests.CreateAsync(
                 HostedRepository,
-                new CreatePullRequestRequest(title, description, draft.SourceBranch, draft.TargetBranch, isDraft),
+                new CreatePullRequestRequest(form.Title, form.Description, form.SourceBranch, form.TargetBranch, form.IsDraft),
                 CancellationToken.None);
             await RefreshPullRequestsAsync();
             SelectedPullRequest = PullRequests.FirstOrDefault(pr => pr.Id == created.Id) ?? created;
@@ -295,6 +311,119 @@ public partial class RepoTabViewModel : ObservableObject, IDisposable
         {
             IsBusy = false;
         }
+    }
+
+    private IReadOnlyList<string> GetPullRequestTargetBranches(string sourceBranch)
+    {
+        var names = LocalBranches
+            .Where(branch => !string.Equals(branch.Name, sourceBranch, StringComparison.OrdinalIgnoreCase))
+            .Select(branch => branch.Name)
+            .Concat(RemoteBranches.Select(branch =>
+            {
+                var slash = branch.Name.IndexOf('/');
+                return slash >= 0 && slash < branch.Name.Length - 1 ? branch.Name[(slash + 1)..] : branch.Name;
+            }))
+            .Where(name => !string.IsNullOrWhiteSpace(name) && !string.Equals(name, "HEAD", StringComparison.OrdinalIgnoreCase))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(name => name, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        return names;
+    }
+
+    private IReadOnlyList<PullRequestTemplateOption> FindPullRequestTemplates(string targetBranch)
+    {
+        var repositoryPath = RepositoryPath;
+        if (string.IsNullOrWhiteSpace(repositoryPath) || !Directory.Exists(repositoryPath))
+            return Array.Empty<PullRequestTemplateOption>();
+
+        var templates = new List<PullRequestTemplateOption>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var root = Path.GetFullPath(repositoryPath);
+        var rootPrefix = root.EndsWith(Path.DirectorySeparatorChar) ? root : root + Path.DirectorySeparatorChar;
+
+        void Add(string relativePath, bool isDefault = false)
+        {
+            try
+            {
+                var fullPath = Path.GetFullPath(Path.Combine(root, relativePath));
+                if (!fullPath.StartsWith(rootPrefix, StringComparison.OrdinalIgnoreCase) || !File.Exists(fullPath) || !seen.Add(fullPath))
+                    return;
+
+                var content = File.ReadAllText(fullPath);
+                if (string.IsNullOrWhiteSpace(content)) return;
+                templates.Add(new PullRequestTemplateOption(Path.GetRelativePath(root, fullPath), content, isDefault));
+            }
+            catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
+        }
+
+        IEnumerable<string> TemplateFiles(string directory)
+        {
+            var fullPath = Path.Combine(root, directory);
+            if (!Directory.Exists(fullPath)) return Array.Empty<string>();
+            try
+            {
+                return Directory.EnumerateFiles(fullPath, "*", SearchOption.TopDirectoryOnly)
+                    .Where(path => Path.GetExtension(path).Equals(".md", StringComparison.OrdinalIgnoreCase) ||
+                                   Path.GetExtension(path).Equals(".txt", StringComparison.OrdinalIgnoreCase))
+                    .Select(path => Path.GetRelativePath(root, path))
+                    .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
+                    .ToArray();
+            }
+            catch (IOException) { return Array.Empty<string>(); }
+            catch (UnauthorizedAccessException) { return Array.Empty<string>(); }
+        }
+
+        if (HostedRepository?.Provider == HostingProviderKind.AzureDevOps)
+        {
+            var folders = new[] { ".azuredevops", ".vsts", "docs", "" };
+            var branchParts = targetBranch.Split('/', StringSplitOptions.RemoveEmptyEntries)
+                .Where(part => part is not "." and not "..")
+                .ToArray();
+            foreach (var folder in folders)
+            {
+                var branchDirectory = Path.Combine(folder, "pull_request_template", "branches");
+                for (var partCount = branchParts.Length; partCount > 0; partCount--)
+                {
+                    var branchPath = Path.Combine(branchParts.Take(partCount).ToArray());
+                    Add(Path.Combine(branchDirectory, branchPath + ".md"), isDefault: templates.Count == 0);
+                    if (templates.Count > 0) break;
+                    Add(Path.Combine(branchDirectory, branchPath + ".txt"), isDefault: templates.Count == 0);
+                    if (templates.Count > 0) break;
+                }
+            }
+
+            if (!templates.Any(template => template.IsDefault))
+            {
+                foreach (var folder in folders)
+                {
+                    Add(Path.Combine(folder, "pull_request_template.md"), isDefault: true);
+                    if (templates.Any(template => template.IsDefault)) break;
+                    Add(Path.Combine(folder, "pull_request_template.txt"), isDefault: true);
+                    if (templates.Any(template => template.IsDefault)) break;
+                }
+            }
+
+            foreach (var folder in folders)
+                foreach (var templatePath in TemplateFiles(Path.Combine(folder, "pull_request_template")))
+                    if (!templatePath.Contains($"{Path.DirectorySeparatorChar}branches{Path.DirectorySeparatorChar}", StringComparison.OrdinalIgnoreCase))
+                        Add(templatePath);
+        }
+        else
+        {
+            var defaults = new[] { ".github/pull_request_template.md", "pull_request_template.md", "docs/pull_request_template.md" };
+            foreach (var templatePath in defaults)
+            {
+                Add(templatePath, isDefault: templates.Count == 0);
+                if (templates.Any(template => template.IsDefault)) break;
+            }
+
+            foreach (var directory in new[] { ".github/PULL_REQUEST_TEMPLATE", "PULL_REQUEST_TEMPLATE", "docs/PULL_REQUEST_TEMPLATE" })
+                foreach (var templatePath in TemplateFiles(directory))
+                    Add(templatePath);
+        }
+
+        return templates;
     }
 
     [RelayCommand(CanExecute = nameof(CanCheckoutSelectedPullRequest))]
@@ -339,25 +468,42 @@ public partial class RepoTabViewModel : ObservableObject, IDisposable
     [RelayCommand(CanExecute = nameof(CanMergeSelectedPullRequest))]
     private async Task MergePullRequest()
     {
-        if (HostedRepository is null || SelectedPullRequest is null) return;
+        if (HostedRepository is not { } repository || SelectedPullRequest is not { } pullRequest) return;
+
+        var strategy = await _dialogs.ChoosePullRequestMergeStrategyAsync(ProviderCapabilities.SupportedMergeStrategies);
+        if (strategy is null) return;
+        if (!ProviderCapabilities.SupportedMergeStrategies.Contains(strategy.Value))
+        {
+            StatusText = $"The selected provider does not support {strategy.Value}.";
+            return;
+        }
 
         var confirmed = await _dialogs.ConfirmAsync(
             "Merge pull request",
-            $"Merge PR #{SelectedPullRequest.Number} '{SelectedPullRequest.Title}' as a squash commit?");
+            $"Merge PR #{pullRequest.Number} '{pullRequest.Title}' using {strategy.Value}?");
         if (!confirmed) return;
 
         try
         {
             IsBusy = true;
             await _pullRequests.MergeAsync(
-                HostedRepository,
-                SelectedPullRequest.Id,
-                new PullRequestMergeRequest(PullRequestMergeStrategy.Squash, DeleteSourceBranch: false),
+                repository,
+                pullRequest.Id,
+                new PullRequestMergeRequest(strategy.Value, DeleteSourceBranch: false),
                 CancellationToken.None);
             await RefreshPullRequestsAsync();
-            if (SelectedPullRequest is { } selected)
-                await LoadPullRequestDetailAsync(selected);
-            StatusText = $"Merged PR #{SelectedPullRequest.Number}.";
+            var refreshedPullRequest = PullRequests.FirstOrDefault(pr => pr.Id == pullRequest.Id);
+            if (refreshedPullRequest is not null)
+            {
+                SelectedPullRequest = refreshedPullRequest;
+                await LoadPullRequestDetailAsync(refreshedPullRequest);
+            }
+            else
+            {
+                SelectedPullRequest = null;
+                ClearPullRequestDetail();
+            }
+            StatusText = $"Merged PR #{pullRequest.Number} using {strategy.Value}.";
         }
         catch (Exception ex)
         {
@@ -557,6 +703,10 @@ public partial class RepoTabViewModel : ObservableObject, IDisposable
         SelectedStash = null;
         ShowWorkingDirectory = false;
         _detailSha = null;
+        PullRequestDetail = null;
+        PullRequestCommits.Clear();
+        PullRequestStatusChecks.Clear();
+        PullRequestThreads.Clear();
         DetailHeading = $"PR #{value.Number}: {value.Title}";
         CommitFiles.Clear();
         ActiveDiff = null;
@@ -639,6 +789,7 @@ public partial class RepoTabViewModel : ObservableObject, IDisposable
         {
             IsBusy = true;
             var detail = await _pullRequests.GetDetailAsync(HostedRepository, selected.Id, CancellationToken.None);
+            if (SelectedPullRequest?.Id != selected.Id) return;
             PullRequestDetail = detail;
             Replace(CommitFiles, detail.Files);
             Replace(PullRequestCommits, detail.Commits);
@@ -648,8 +799,11 @@ public partial class RepoTabViewModel : ObservableObject, IDisposable
         }
         catch (Exception ex)
         {
-            ClearPullRequestDetail();
-            StatusText = ex.Message;
+            if (SelectedPullRequest?.Id == selected.Id)
+            {
+                ClearPullRequestDetail();
+                StatusText = ex.Message;
+            }
         }
         finally
         {
@@ -733,7 +887,24 @@ public partial class RepoTabViewModel : ObservableObject, IDisposable
         OnPropertyChanged(nameof(HasCurrentFile));
         OnPropertyChanged(nameof(CanCommentSelectedPullRequestInline));
         if (ShowWorkingDirectory) return;
-        if (value is null || _detailSha is null) { ActiveDiff = null; return; }
+        if (value is null) { ActiveDiff = null; return; }
+        if (PullRequestDetail is not null)
+        {
+            if (string.IsNullOrWhiteSpace(value.Patch))
+            {
+                ActiveDiff = null;
+                DiffEditable = false;
+                DiffStaged = false;
+                StatusText = $"A diff is unavailable for '{value.Path}'.";
+                return;
+            }
+
+            ActiveDiff = PatchParser.Parse(value.Path, value.Patch, value.Status == "A", value.Status == "D");
+            DiffEditable = false;
+            DiffStaged = false;
+            return;
+        }
+        if (_detailSha is null) { ActiveDiff = null; return; }
         try
         {
             ActiveDiff = _git.GetCommitDiff(_detailSha, value.Path);
@@ -945,7 +1116,12 @@ public partial class RepoTabViewModel : ObservableObject, IDisposable
         if (selectedLines.Count == 0)
             return null;
 
-        var side = selectedLines.Any(line => line.Kind == DiffLineKind.Removed)
+        var hasAdded = selectedLines.Any(line => line.Kind == DiffLineKind.Added);
+        var hasRemoved = selectedLines.Any(line => line.Kind == DiffLineKind.Removed);
+        if (hasAdded && hasRemoved)
+            return null;
+
+        var side = hasRemoved
             ? PullRequestCommentSide.Left
             : PullRequestCommentSide.Right;
         var lineNumbers = selectedLines
@@ -955,7 +1131,7 @@ public partial class RepoTabViewModel : ObservableObject, IDisposable
             .Distinct()
             .OrderBy(lineNumber => lineNumber)
             .ToArray();
-        if (lineNumbers.Length == 0)
+        if (lineNumbers.Length == 0 || lineNumbers.Zip(lineNumbers.Skip(1)).Any(pair => pair.Second != pair.First + 1))
             return null;
 
         return new PullRequestCommentAnchor(
@@ -1016,11 +1192,23 @@ public partial class RepoTabViewModel : ObservableObject, IDisposable
 
     // ---- branches -----------------------------------------------------------
 
-    [RelayCommand]
+    partial void OnSelectedBranchChanged(RefInfo? value)
+    {
+        OnPropertyChanged(nameof(CanCheckoutSelectedBranch));
+        CheckoutCommand.NotifyCanExecuteChanged();
+    }
+
+    [RelayCommand(CanExecute = nameof(CanCheckoutSelectedBranch))]
     private void Checkout()
     {
-        if (SelectedBranch is not { Kind: RefKind.LocalBranch } b) return;
-        Run(() => _git.Checkout(b.Name));
+        if (SelectedBranch is not { } branch) return;
+        Run(() =>
+        {
+            if (branch.Kind == RefKind.RemoteBranch)
+                _git.CheckoutRemoteBranch(branch.Name);
+            else if (branch.Kind == RefKind.LocalBranch)
+                _git.Checkout(branch.Name);
+        });
     }
 
     private IReadOnlyList<ContextAction> BuildMenu(GraphRow row)
@@ -1442,7 +1630,7 @@ public partial class RepoTabViewModel : ObservableObject, IDisposable
 
         try
         {
-            await AuthRetry.RunAsync(_dialogs, () => _git.GetRemoteUrl(), () => operation(progress, ct), ct);
+            await AuthRetry.RunAsync(_dialogs, () => _git.GetRemoteUrl(), () => operation(progress, ct), ct, _git.RepositoryPath);
             AutoFetchPaused = false;
             RefreshCore(keepSelection: true, includeStatus);
             StatusText = $"{name} complete.";
