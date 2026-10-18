@@ -156,6 +156,179 @@ public partial class MainWindow : Window, IDialogService
         return await dialog.ShowDialog<PullRequestMergeStrategy?>(this);
     }
 
+    public async Task<PullRequestCreationFormResult?> ShowPullRequestCreationAsync(
+        HostedRepositoryId repository,
+        IReadOnlyList<string> sourceBranches,
+        IReadOnlyList<string> targetBranches,
+        CreatePullRequestDraft draft,
+        IReadOnlyList<PullRequestTemplateOption> templates)
+    {
+        var repoText = new TextBox
+        {
+            Text = repository.Provider == HostingProviderKind.AzureDevOps
+                ? $"{repository.Owner}/{repository.Project}/{repository.Name}"
+                : $"{repository.Owner}/{repository.Name}",
+            IsReadOnly = true
+        };
+        var sourceOptions = sourceBranches.Contains(draft.SourceBranch, StringComparer.OrdinalIgnoreCase)
+            ? sourceBranches
+            : sourceBranches.Append(draft.SourceBranch).ToArray();
+        var sourceChoice = new ComboBox
+        {
+            ItemsSource = sourceOptions,
+            SelectedItem = draft.SourceBranch,
+            MinWidth = 420
+        };
+        var targetOptions = targetBranches.Contains(draft.TargetBranch, StringComparer.OrdinalIgnoreCase)
+            ? targetBranches
+            : targetBranches.Append(draft.TargetBranch).ToArray();
+        var targetChoice = new ComboBox
+        {
+            ItemsSource = targetOptions,
+            SelectedItem = draft.TargetBranch,
+            MinWidth = 420
+        };
+        var title = new TextBox { Text = draft.Title, Watermark = "Pull request title" };
+        var description = new TextBox
+        {
+            Text = draft.Description,
+            Watermark = "Describe the changes and context for reviewers",
+            AcceptsReturn = true,
+            TextWrapping = Avalonia.Media.TextWrapping.Wrap,
+            VerticalContentAlignment = Avalonia.Layout.VerticalAlignment.Top,
+            MinHeight = 230
+        };
+        var templateOptions = new[] { new PullRequestTemplateOption("No template", string.Empty) }
+            .Concat(templates).ToArray();
+        var templateChoice = new ComboBox
+        {
+            ItemsSource = templateOptions,
+            SelectedItem = templates.FirstOrDefault(template => template.IsDefault) ?? templateOptions[0],
+            MinWidth = 280
+        };
+        var submitAsDraft = new CheckBox { Content = "Submit as draft", IsChecked = draft.IsDraft };
+        var helper = new TextBlock { Opacity = 0.7, TextWrapping = Avalonia.Media.TextWrapping.Wrap };
+        var generate = new Button { Content = "[Generate title and description ]" };
+        generate.Click += (_, _) => helper.Text = "Title and description generation will be available later.";
+        templateChoice.SelectionChanged += (_, _) =>
+        {
+            if (templateChoice.SelectedItem is not PullRequestTemplateOption selected || string.IsNullOrWhiteSpace(selected.Content))
+                return;
+            description.Text = selected.IsDefault || string.IsNullOrWhiteSpace(description.Text)
+                ? selected.Content
+                : $"{description.Text.TrimEnd()}\n\n{selected.Content}";
+            helper.Text = $"Loaded template: {selected.Name}";
+        };
+        if (templateChoice.SelectedItem is PullRequestTemplateOption { IsDefault: true } defaultTemplate)
+        {
+            description.Text = defaultTemplate.Content;
+            helper.Text = $"Loaded default template: {defaultTemplate.Name}";
+        }
+
+        var validation = new TextBlock { Foreground = Avalonia.Media.Brushes.OrangeRed, TextWrapping = Avalonia.Media.TextWrapping.Wrap };
+        var cancel = new Button { Content = "Cancel", IsCancel = true };
+        var create = new Button { Content = "Create pull request", IsDefault = true };
+        var contentGrid = new Grid { RowDefinitions = new RowDefinitions("*,Auto") };
+        var actionPanel = new StackPanel
+        {
+            Spacing = 10,
+            Margin = new Avalonia.Thickness(20, 8, 20, 16),
+            Children =
+            {
+                validation,
+                new StackPanel
+                {
+                    Orientation = Avalonia.Layout.Orientation.Horizontal,
+                    HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Right,
+                    Spacing = 8,
+                    Children = { cancel, create }
+                }
+            }
+        };
+        Grid.SetRow(actionPanel, 1);
+        contentGrid.Children.Add(new ScrollViewer
+        {
+            Content = new StackPanel
+            {
+                Spacing = 10,
+                Margin = new Avalonia.Thickness(20),
+                Children =
+                {
+                    new TextBlock { Text = "Create pull request", FontSize = 22, FontWeight = Avalonia.Media.FontWeight.SemiBold },
+                    new TextBlock { Text = "Review the repository and branch details, then write a title and description for reviewers.", Opacity = 0.75, TextWrapping = Avalonia.Media.TextWrapping.Wrap },
+                    FormField("Repository", repoText),
+                    FormField("Source branch", sourceChoice),
+                    FormField("Target branch", targetChoice),
+                    FormField("Title", title),
+                    new StackPanel
+                    {
+                        Orientation = Avalonia.Layout.Orientation.Horizontal,
+                        Spacing = 10,
+                        Children =
+                        {
+                            new TextBlock { Text = "Template", VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center, FontWeight = Avalonia.Media.FontWeight.SemiBold },
+                            templateChoice
+                        }
+                    },
+                    new StackPanel
+                    {
+                        Orientation = Avalonia.Layout.Orientation.Horizontal,
+                        Spacing = 10,
+                        Children =
+                        {
+                            new TextBlock { Text = "Description", FontWeight = Avalonia.Media.FontWeight.SemiBold, VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center },
+                            generate
+                        }
+                    },
+                    description,
+                    helper,
+                    submitAsDraft
+                }
+            }
+        });
+        contentGrid.Children.Add(actionPanel);
+        var dialog = new Window
+        {
+            Title = "Create pull request",
+            Width = 820,
+            Height = 760,
+            MinWidth = 680,
+            MinHeight = 620,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner,
+            Content = contentGrid
+        };
+        cancel.Click += (_, _) => dialog.Close(null);
+        create.Click += (_, _) =>
+        {
+            var selectedTarget = (targetChoice.SelectedItem as string)?.Trim();
+            var selectedSource = (sourceChoice.SelectedItem as string)?.Trim();
+            var selectedTitle = title.Text?.Trim();
+            if (string.IsNullOrWhiteSpace(selectedSource) || string.IsNullOrWhiteSpace(selectedTarget) || string.IsNullOrWhiteSpace(selectedTitle))
+            {
+                validation.Text = "Choose a target branch and enter a title to continue.";
+                return;
+            }
+            dialog.Close(new PullRequestCreationFormResult(
+                selectedSource,
+                selectedTarget,
+                selectedTitle,
+                description.Text ?? string.Empty,
+                submitAsDraft.IsChecked == true));
+        };
+
+        return await dialog.ShowDialog<PullRequestCreationFormResult?>(this);
+    }
+
+    private static StackPanel FormField(string label, Control control) => new()
+    {
+        Spacing = 4,
+        Children =
+        {
+            new TextBlock { Text = label, FontWeight = Avalonia.Media.FontWeight.SemiBold },
+            control
+        }
+    };
+
     public async Task CopyTextAsync(string text)
     {
         if (Clipboard is { } clipboard) await clipboard.SetTextAsync(text);

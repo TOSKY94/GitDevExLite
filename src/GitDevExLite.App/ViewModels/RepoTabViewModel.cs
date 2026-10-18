@@ -251,8 +251,11 @@ public partial class RepoTabViewModel : ObservableObject, IDisposable
         if (HostedRepository is null) return;
 
         var sourceBranch = CurrentBranchName;
-        var targetBranch = (await _dialogs.PromptAsync("Create pull request", "Target branch:", "main"))?.Trim();
-        if (string.IsNullOrWhiteSpace(targetBranch)) return;
+        var targetBranches = GetPullRequestTargetBranches(sourceBranch);
+        var targetBranch = targetBranches.FirstOrDefault(branch => string.Equals(branch, "main", StringComparison.OrdinalIgnoreCase))
+            ?? targetBranches.FirstOrDefault(branch => string.Equals(branch, "master", StringComparison.OrdinalIgnoreCase))
+            ?? targetBranches.FirstOrDefault()
+            ?? "main";
 
         CreatePullRequestDraft draft;
         try
@@ -265,14 +268,13 @@ public partial class RepoTabViewModel : ObservableObject, IDisposable
             return;
         }
 
-        var title = (await _dialogs.PromptAsync("Create pull request", "Title:", draft.Title))?.Trim();
-        if (string.IsNullOrWhiteSpace(title)) return;
-        var description = await _dialogs.PromptAsync("Create pull request", "Description:", draft.Description) ?? "";
-        var isDraft = await _dialogs.ConfirmAsync(
-            "Create pull request",
-            draft.IsDraft
-                ? "Create this pull request as a draft?"
-                : "Create this pull request as a draft instead of ready for review?");
+        var form = await _dialogs.ShowPullRequestCreationAsync(
+            HostedRepository,
+            LocalBranches.Select(branch => branch.Name).Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(name => name, StringComparer.OrdinalIgnoreCase).ToArray(),
+            targetBranches,
+            draft,
+            FindPullRequestTemplates(draft.TargetBranch));
+        if (form is null) return;
 
         var secretMatches = _secretScanner.Scan(_git, Staged.Concat(Unstaged).ToList());
         if (secretMatches.Count > 0)
@@ -295,7 +297,7 @@ public partial class RepoTabViewModel : ObservableObject, IDisposable
             IsBusy = true;
             var created = await _pullRequests.CreateAsync(
                 HostedRepository,
-                new CreatePullRequestRequest(title, description, draft.SourceBranch, draft.TargetBranch, isDraft),
+                new CreatePullRequestRequest(form.Title, form.Description, form.SourceBranch, form.TargetBranch, form.IsDraft),
                 CancellationToken.None);
             await RefreshPullRequestsAsync();
             SelectedPullRequest = PullRequests.FirstOrDefault(pr => pr.Id == created.Id) ?? created;
@@ -309,6 +311,119 @@ public partial class RepoTabViewModel : ObservableObject, IDisposable
         {
             IsBusy = false;
         }
+    }
+
+    private IReadOnlyList<string> GetPullRequestTargetBranches(string sourceBranch)
+    {
+        var names = LocalBranches
+            .Where(branch => !string.Equals(branch.Name, sourceBranch, StringComparison.OrdinalIgnoreCase))
+            .Select(branch => branch.Name)
+            .Concat(RemoteBranches.Select(branch =>
+            {
+                var slash = branch.Name.IndexOf('/');
+                return slash >= 0 && slash < branch.Name.Length - 1 ? branch.Name[(slash + 1)..] : branch.Name;
+            }))
+            .Where(name => !string.IsNullOrWhiteSpace(name) && !string.Equals(name, "HEAD", StringComparison.OrdinalIgnoreCase))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(name => name, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        return names;
+    }
+
+    private IReadOnlyList<PullRequestTemplateOption> FindPullRequestTemplates(string targetBranch)
+    {
+        var repositoryPath = RepositoryPath;
+        if (string.IsNullOrWhiteSpace(repositoryPath) || !Directory.Exists(repositoryPath))
+            return Array.Empty<PullRequestTemplateOption>();
+
+        var templates = new List<PullRequestTemplateOption>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var root = Path.GetFullPath(repositoryPath);
+        var rootPrefix = root.EndsWith(Path.DirectorySeparatorChar) ? root : root + Path.DirectorySeparatorChar;
+
+        void Add(string relativePath, bool isDefault = false)
+        {
+            try
+            {
+                var fullPath = Path.GetFullPath(Path.Combine(root, relativePath));
+                if (!fullPath.StartsWith(rootPrefix, StringComparison.OrdinalIgnoreCase) || !File.Exists(fullPath) || !seen.Add(fullPath))
+                    return;
+
+                var content = File.ReadAllText(fullPath);
+                if (string.IsNullOrWhiteSpace(content)) return;
+                templates.Add(new PullRequestTemplateOption(Path.GetRelativePath(root, fullPath), content, isDefault));
+            }
+            catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
+        }
+
+        IEnumerable<string> TemplateFiles(string directory)
+        {
+            var fullPath = Path.Combine(root, directory);
+            if (!Directory.Exists(fullPath)) return Array.Empty<string>();
+            try
+            {
+                return Directory.EnumerateFiles(fullPath, "*", SearchOption.TopDirectoryOnly)
+                    .Where(path => Path.GetExtension(path).Equals(".md", StringComparison.OrdinalIgnoreCase) ||
+                                   Path.GetExtension(path).Equals(".txt", StringComparison.OrdinalIgnoreCase))
+                    .Select(path => Path.GetRelativePath(root, path))
+                    .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
+                    .ToArray();
+            }
+            catch (IOException) { return Array.Empty<string>(); }
+            catch (UnauthorizedAccessException) { return Array.Empty<string>(); }
+        }
+
+        if (HostedRepository?.Provider == HostingProviderKind.AzureDevOps)
+        {
+            var folders = new[] { ".azuredevops", ".vsts", "docs", "" };
+            var branchParts = targetBranch.Split('/', StringSplitOptions.RemoveEmptyEntries)
+                .Where(part => part is not "." and not "..")
+                .ToArray();
+            foreach (var folder in folders)
+            {
+                var branchDirectory = Path.Combine(folder, "pull_request_template", "branches");
+                for (var partCount = branchParts.Length; partCount > 0; partCount--)
+                {
+                    var branchPath = Path.Combine(branchParts.Take(partCount).ToArray());
+                    Add(Path.Combine(branchDirectory, branchPath + ".md"), isDefault: templates.Count == 0);
+                    if (templates.Count > 0) break;
+                    Add(Path.Combine(branchDirectory, branchPath + ".txt"), isDefault: templates.Count == 0);
+                    if (templates.Count > 0) break;
+                }
+            }
+
+            if (!templates.Any(template => template.IsDefault))
+            {
+                foreach (var folder in folders)
+                {
+                    Add(Path.Combine(folder, "pull_request_template.md"), isDefault: true);
+                    if (templates.Any(template => template.IsDefault)) break;
+                    Add(Path.Combine(folder, "pull_request_template.txt"), isDefault: true);
+                    if (templates.Any(template => template.IsDefault)) break;
+                }
+            }
+
+            foreach (var folder in folders)
+                foreach (var templatePath in TemplateFiles(Path.Combine(folder, "pull_request_template")))
+                    if (!templatePath.Contains($"{Path.DirectorySeparatorChar}branches{Path.DirectorySeparatorChar}", StringComparison.OrdinalIgnoreCase))
+                        Add(templatePath);
+        }
+        else
+        {
+            var defaults = new[] { ".github/pull_request_template.md", "pull_request_template.md", "docs/pull_request_template.md" };
+            foreach (var templatePath in defaults)
+            {
+                Add(templatePath, isDefault: templates.Count == 0);
+                if (templates.Any(template => template.IsDefault)) break;
+            }
+
+            foreach (var directory in new[] { ".github/PULL_REQUEST_TEMPLATE", "PULL_REQUEST_TEMPLATE", "docs/PULL_REQUEST_TEMPLATE" })
+                foreach (var templatePath in TemplateFiles(directory))
+                    Add(templatePath);
+        }
+
+        return templates;
     }
 
     [RelayCommand(CanExecute = nameof(CanCheckoutSelectedPullRequest))]

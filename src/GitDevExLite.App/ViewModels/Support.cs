@@ -32,6 +32,10 @@ public sealed record CredentialRequest(string? Url, string Message, bool IsSsh, 
 /// <summary>UseGcm triggers an interactive Git Credential Manager sign-in; otherwise Username/Token are stored.</summary>
 public sealed record CredentialChoice(bool UseGcm, string? Username, string? Token, string? Organization = null);
 
+public sealed record PullRequestTemplateOption(string Name, string Content, bool IsDefault = false);
+
+public sealed record PullRequestCreationFormResult(string SourceBranch, string TargetBranch, string Title, string Description, bool IsDraft);
+
 public delegate Task CloneRunner(string url, string destination, IProgress<GitProgress> progress, CancellationToken ct);
 
 public interface IDialogService
@@ -39,6 +43,12 @@ public interface IDialogService
     Task<string?> PromptAsync(string title, string label, string initial = "");
     Task<bool> ConfirmAsync(string title, string message);
     Task<PullRequestMergeStrategy?> ChoosePullRequestMergeStrategyAsync(IReadOnlyList<PullRequestMergeStrategy> supportedStrategies);
+    Task<PullRequestCreationFormResult?> ShowPullRequestCreationAsync(
+        HostedRepositoryId repository,
+        IReadOnlyList<string> sourceBranches,
+        IReadOnlyList<string> targetBranches,
+        CreatePullRequestDraft draft,
+        IReadOnlyList<PullRequestTemplateOption> templates);
     Task CopyTextAsync(string text);
     Task<CredentialChoice?> PromptCredentialsAsync(CredentialRequest request);
 
